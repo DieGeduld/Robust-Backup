@@ -323,6 +323,16 @@ class WPRB_Storage_Manager {
     // ─────────────────────────────────────────────
 
     /**
+     * Get the storage folder name based on domain.
+     */
+    private function get_storage_folder_name() {
+        $url = parse_url( get_site_url(), PHP_URL_HOST );
+        // Remove www. and sanitize
+        $name = str_replace( 'www.', '', $url );
+        return preg_replace( '/[^a-zA-Z0-9\._-]/', '', $name );
+    }
+
+    /**
      * Upload to Dropbox using chunked upload sessions.
      */
     private function store_dropbox( $backup_id, $files ) {
@@ -345,6 +355,8 @@ class WPRB_Storage_Manager {
         }
 
         $this->storage_log( 'Dropbox: Access Token erhalten, starte Upload...' );
+        
+        $folder_name = $this->get_storage_folder_name();
 
         $uploaded = 0;
         $errors   = [];
@@ -355,7 +367,7 @@ class WPRB_Storage_Manager {
                 continue;
             }
 
-            $dest   = '/WP-Backups/' . $backup_id . '/' . basename( $file );
+            $dest   = '/' . $folder_name . '/' . $backup_id . '/' . basename( $file );
             $result = $this->dropbox_upload_file( $access_token, $file, $dest );
 
             if ( $result === true ) {
@@ -664,7 +676,8 @@ class WPRB_Storage_Manager {
         $access_token = $this->dropbox_refresh_token( $token_data );
         if ( ! $access_token ) return false;
 
-        $source_path = '/WP-Backups/' . $backup_id . '/' . $filename;
+        $folder_name = $this->get_storage_folder_name();
+        $source_path = '/' . $folder_name . '/' . $backup_id . '/' . $filename;
         
         $this->storage_log( 'Dropbox-Download: ' . $source_path );
 
@@ -677,6 +690,25 @@ class WPRB_Storage_Manager {
                 'Dropbox-API-Arg' => wp_json_encode( [ 'path' => $source_path ] ),
             ],
         ] );
+
+        if ( is_wp_error( $response ) || wp_remote_retrieve_response_code( $response ) !== 200 ) {
+            // Fallback: Check if it exists in the old default folder (WP-Backups)
+            if ( $folder_name !== 'WP-Backups' && ! is_wp_error( $response ) && wp_remote_retrieve_response_code( $response ) === 409 ) {
+                 // 409 usually means path not found
+                 $this->storage_log( 'Dropbox-Download: Nicht in Domain-Ordner gefunden, versuche Legacy-Ordner...' );
+                 
+                 $source_path_legacy = '/WP-Backups/' . $backup_id . '/' . $filename;
+                 $response = wp_remote_post( 'https://content.dropboxapi.com/2/files/download', [
+                    'timeout' => 300,
+                    'stream'  => true,
+                    'filename' => $dest,
+                    'headers' => [
+                        'Authorization'   => 'Bearer ' . $access_token,
+                        'Dropbox-API-Arg' => wp_json_encode( [ 'path' => $source_path_legacy ] ),
+                    ],
+                ] );
+            }
+        }
 
         if ( is_wp_error( $response ) || wp_remote_retrieve_response_code( $response ) !== 200 ) {
             $this->storage_log( 'Dropbox-Download Fehler: ' . ( is_wp_error( $response ) ? $response->get_error_message() : wp_remote_retrieve_response_code( $response ) ) );

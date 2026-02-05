@@ -33,19 +33,30 @@
         });
     }
 
-    function showNotice(message, type) {
+    function showNotice(message, type, details = '') {
         const $done = $('#wprb-done-section');
         const $msg = $('#wprb-done-message');
         const icon = type === 'success' ? 'yes-alt' : 'warning';
+        
+        // Map types to CSS classes
+        const noticeClass = type === 'success' ? 'wprb-notice-success' : (type === 'error' ? 'wprb-notice-error' : 'wprb-notice-warning');
 
         $done.find('.wprb-notice')
-            .removeClass('wprb-notice-success wprb-notice-error')
-            .addClass('wprb-notice-' + type);
+            .removeClass('wprb-notice-success wprb-notice-error wprb-notice-warning')
+            .addClass(noticeClass);
         $done.find('.dashicons')
             .removeClass('dashicons-yes-alt dashicons-warning')
             .addClass('dashicons-' + icon);
 
         $msg.text(message);
+        
+        // Remove old details if any
+        $done.find('.wprb-notice-details').remove();
+        
+        if (details) {
+            $msg.after('<div class="wprb-notice-details">' + details + '</div>');
+        }
+
         $done.slideDown(200);
     }
 
@@ -132,12 +143,22 @@
         });
 
         let message = data.strings.backupDone;
+        let type = 'success';
+        let details = '';
+
         if (state.errors && state.errors.length > 0) {
-            message += ' (mit ' + state.errors.length + ' Fehler(n))';
-            showNotice(message, 'error');
-        } else {
-            showNotice(message, 'success');
+            message += ' wurde mit ' + state.errors.length + ' Fehler(n) abgeschlossen.';
+            type = 'warning'; // Use warning instead of error so it's not red/scary if it partially succeeded
+            
+            // Format errors as a list for display
+            details = '<ul class="wprb-error-list" style="margin-top: 10px; list-style: disc inside; text-align: left;">';
+            state.errors.forEach(function(err) {
+                details += '<li>' + err + '</li>';
+            });
+            details += '</ul>';
         }
+
+        showNotice(message, type, details);
 
         $('.wprb-start-backup').prop('disabled', false);
     }
@@ -543,6 +564,28 @@
                 updateProgress(response.data.progress, response.data.message);
                 processNext();
             }
+        });
+
+        // Disconnect storage
+        $(document).on('click', '.wprb-disconnect-storage', function (e) {
+            e.preventDefault();
+            const service = $(this).data('service');
+            
+            if (!confirm('Verbindung zu ' + service + ' wirklich trennen?')) {
+                return;
+            }
+
+            ajax('wprb_disconnect_storage', { service: service })
+                .done(function (response) {
+                    if (response.success) {
+                        location.reload();
+                    } else {
+                        alert(response.data ? response.data.message : data.strings.error);
+                    }
+                })
+                .fail(function () {
+                    alert(data.strings.error);
+                });
         });
     });
 

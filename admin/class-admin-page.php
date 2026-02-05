@@ -543,7 +543,8 @@ class WPRB_Admin_Page {
                             <?php
                             $gdrive_token = get_option( 'wprb_gdrive_token', '' );
                             if ( ! empty( $gdrive_token ) ) {
-                                echo '<span class="wprb-status-ok">✅ Verbunden</span>';
+                                echo '<span class="wprb-status-ok">✅ Verbunden</span> ';
+                                echo '<a href="#" class="wprb-disconnect-storage button button-link-delete" data-service="gdrive" style="margin-left: 10px;">Trennen</a>';
                             } else {
                                 $auth_url = $storage_mgr->get_gdrive_auth_url();
                                 if ( $auth_url ) {
@@ -576,7 +577,8 @@ class WPRB_Admin_Page {
                             <?php
                             $dropbox_token = get_option( 'wprb_dropbox_token', '' );
                             if ( ! empty( $dropbox_token ) ) {
-                                echo '<span class="wprb-status-ok">✅ Verbunden</span>';
+                                echo '<span class="wprb-status-ok">✅ Verbunden</span> ';
+                                echo '<a href="#" class="wprb-disconnect-storage button button-link-delete" data-service="dropbox" style="margin-left: 10px;">Trennen</a>';
                             } else {
                                 $auth_url = $storage_mgr->get_dropbox_auth_url();
                                 if ( $auth_url ) {

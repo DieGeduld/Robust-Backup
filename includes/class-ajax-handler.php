@@ -20,6 +20,7 @@ class WPRB_Ajax_Handler {
         add_action( 'wp_ajax_wprb_delete_backup', [ $this, 'delete_backup' ] );
         add_action( 'wp_ajax_wprb_list_backups', [ $this, 'list_backups' ] );
         add_action( 'wp_ajax_wprb_save_settings', [ $this, 'save_settings' ] );
+        add_action( 'wp_ajax_wprb_disconnect_storage', [ $this, 'disconnect_storage' ] );
 
         // Restore operations
         add_action( 'wp_ajax_wprb_analyze_backup', [ $this, 'analyze_backup' ] );
@@ -173,6 +174,25 @@ class WPRB_Ajax_Handler {
         WPRB_Backup_Scheduler::schedule();
 
         wp_send_json_success( [ 'message' => 'Einstellungen gespeichert.' ] );
+    }
+
+    /**
+     * Disconnect storage service.
+     */
+    public function disconnect_storage() {
+        $this->verify();
+
+        $service = sanitize_text_field( $_POST['service'] ?? '' );
+
+        if ( $service === 'gdrive' ) {
+            delete_option( 'wprb_gdrive_token' );
+            wp_send_json_success( [ 'message' => 'Google Drive getrennt.' ] );
+        } elseif ( $service === 'dropbox' ) {
+            delete_option( 'wprb_dropbox_token' );
+            wp_send_json_success( [ 'message' => 'Dropbox getrennt.' ] );
+        } else {
+            wp_send_json_error( [ 'message' => 'Unbekannter Dienst.' ] );
+        }
     }
 
     /**

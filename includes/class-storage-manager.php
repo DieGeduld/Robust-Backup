@@ -663,6 +663,7 @@ class WPRB_Storage_Manager {
             'response_type'     => 'code',
             'token_access_type' => 'offline',
             'state'             => 'dropbox',
+            'scope'             => 'files.content.write files.content.read',
         ];
 
         return 'https://www.dropbox.com/oauth2/authorize?' . http_build_query( $params, '', '&' );

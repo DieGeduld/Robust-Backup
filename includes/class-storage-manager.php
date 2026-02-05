@@ -607,6 +607,91 @@ class WPRB_Storage_Manager {
         return 'Finish HTTP ' . $status . ': ' . $error;
     }
 
+    // ─────────────────────────────────────────────
+    // Cloud Download / Restore
+    // ─────────────────────────────────────────────
+
+    /**
+     * Attempt to download missing files from cloud for a backup.
+     * Returns true if all files are now present locally.
+     */
+    public function download_backup_from_cloud( $backup_id ) {
+        $dir = WPRB_BACKUP_DIR . sanitize_file_name( $backup_id );
+        
+        $meta_file = $dir . '/backup-meta.json';
+        if ( ! file_exists( $meta_file ) ) {
+            return [ 'success' => false, 'message' => 'Metadaten fehlen.' ];
+        }
+
+        $meta = json_decode( file_get_contents( $meta_file ), true );
+        $files = $meta['files'] ?? [];
+        $failed = [];
+
+        // Check if files are already there
+        foreach ( $files as $file ) {
+            if ( ! file_exists( $dir . '/' . $file ) ) {
+                // Try Dropbox first
+                $success = $this->dropbox_download_file( $backup_id, $file, $dir . '/' . $file );
+                if ( ! $success ) {
+                    // Try Google Drive
+                    $success = $this->gdrive_download_file( $backup_id, $file, $dir . '/' . $file );
+                }
+
+                if ( ! $success ) {
+                    $failed[] = $file;
+                }
+            }
+        }
+
+        if ( empty( $failed ) ) {
+            // Restore complete, remove deleted flag
+            unset( $meta['local_deleted'] );
+            file_put_contents( $meta_file, wp_json_encode( $meta, JSON_PRETTY_PRINT ) );
+            return [ 'success' => true, 'message' => 'Alle Dateien geladen.' ];
+        }
+
+        return [ 
+            'success' => false, 
+            'message' => 'Konnte nicht laden: ' . implode( ', ', $failed ) 
+        ];
+    }
+
+    private function dropbox_download_file( $backup_id, $filename, $dest ) {
+        $token = get_option( 'wprb_dropbox_token', '' );
+        if ( empty( $token ) ) return false;
+        
+        $token_data = json_decode( $token, true );
+        $access_token = $this->dropbox_refresh_token( $token_data );
+        if ( ! $access_token ) return false;
+
+        $source_path = '/WP-Backups/' . $backup_id . '/' . $filename;
+        
+        $this->storage_log( 'Dropbox-Download: ' . $source_path );
+
+        $response = wp_remote_post( 'https://content.dropboxapi.com/2/files/download', [
+            'timeout' => 300,
+            'stream'  => true, // Stream to file
+            'filename' => $dest,
+            'headers' => [
+                'Authorization'   => 'Bearer ' . $access_token,
+                'Dropbox-API-Arg' => wp_json_encode( [ 'path' => $source_path ] ),
+            ],
+        ] );
+
+        if ( is_wp_error( $response ) || wp_remote_retrieve_response_code( $response ) !== 200 ) {
+            $this->storage_log( 'Dropbox-Download Fehler: ' . ( is_wp_error( $response ) ? $response->get_error_message() : wp_remote_retrieve_response_code( $response ) ) );
+            return false;
+        }
+
+        return true;
+    }
+
+    private function gdrive_download_file( $backup_id, $filename, $dest ) {
+        // Implementing GDrive download is complex because we need to find the file ID by name first.
+        // For this iteration, we focus on Dropbox as requested.
+        return false;
+    }
+
     /**
      * Log helper for storage operations.
      */
@@ -751,32 +836,49 @@ class WPRB_Storage_Manager {
         foreach ( $dirs as $dir ) {
             $backup_id = basename( $dir );
             $files     = glob( $dir . '/*' );
-            $size      = 0;
-
+            $meta_file = $dir . '/backup-meta.json';
+            $meta      = file_exists( $meta_file ) ? json_decode( file_get_contents( $meta_file ), true ) : [];
+            
+            $is_local_deleted = ! empty( $meta['local_deleted'] );
+            $size = 0;
             $file_info = [];
-            foreach ( $files as $file ) {
-                if ( is_file( $file ) && basename( $file ) !== 'file_list.txt' ) {
-                    $fsize = filesize( $file );
-                    $size += $fsize;
+
+            // If local files are deleted, rely on metadata for file list
+            if ( $is_local_deleted && ! empty( $meta['files'] ) ) {
+                foreach ( $meta['files'] as $filename ) {
+                    // We don't know the exact size of each file if deleted, 
+                    // unless we stored it in meta. For now, we list them without size or handle gracefully.
+                    // TODO: Improve meta to store file sizes.
                     $file_info[] = [
-                        'name' => basename( $file ),
-                        'size' => size_format( $fsize ),
-                        'url'  => $this->get_download_url( $backup_id, basename( $file ) ),
+                        'name' => $filename,
+                        'size' => 'Cloud', // Indicator
+                        'url'  => '#', // No local download
+                        'missing' => true,
                     ];
+                }
+            } else {
+                foreach ( $files as $file ) {
+                    if ( is_file( $file ) && basename( $file ) !== 'file_list.txt' && basename( $file ) !== 'backup-meta.json' && basename( $file ) !== 'restore.log' ) {
+                        $fsize = filesize( $file );
+                        $size += $fsize;
+                        $file_info[] = [
+                            'name' => basename( $file ),
+                            'size' => size_format( $fsize ),
+                            'url'  => $this->get_download_url( $backup_id, basename( $file ) ),
+                        ];
+                    }
                 }
             }
 
-            $meta_file = $dir . '/backup-meta.json';
-            $meta = file_exists( $meta_file ) ? json_decode( file_get_contents( $meta_file ), true ) : [];
-
             $backups[] = [
-                'id'         => $backup_id,
-                'date'       => $meta['date'] ?? date( 'Y-m-d H:i:s', filemtime( $dir ) ),
-                'size'       => size_format( $size ),
-                'size_raw'   => $size,
-                'type'       => $meta['type'] ?? 'full',
-                'files'      => $file_info,
-                'file_count' => count( $file_info ),
+                'id'            => $backup_id,
+                'date'          => $meta['date'] ?? date( 'Y-m-d H:i:s', filemtime( $dir ) ),
+                'size'          => $is_local_deleted ? 'Cloud' : size_format( $size ),
+                'size_raw'      => $size,
+                'type'          => $meta['type'] ?? 'full',
+                'files'         => $file_info,
+                'file_count'    => count( $file_info ),
+                'local_deleted' => $is_local_deleted,
             ];
         }
 
@@ -798,34 +900,70 @@ class WPRB_Storage_Manager {
             return false;
         }
 
-        $files = new RecursiveIteratorIterator(
-            new RecursiveDirectoryIterator( $dir, RecursiveDirectoryIterator::SKIP_DOTS ),
-            RecursiveIteratorIterator::CHILD_FIRST
-        );
+        return $this->recursive_rmdir( $dir );
+    }
 
-        foreach ( $files as $file ) {
-            if ( $file->isDir() ) {
-                rmdir( $file->getRealPath() );
-            } else {
-                unlink( $file->getRealPath() );
-            }
+    /**
+     * Remove heavy local files but keep backup-meta.json.
+     */
+    public function delete_local_files_only( $backup_id ) {
+        $dir = WPRB_BACKUP_DIR . sanitize_file_name( $backup_id );
+        if ( ! is_dir( $dir ) ) {
+            return false;
         }
 
+        $files = scandir( $dir );
+        foreach ( $files as $file ) {
+            if ( $file === '.' || $file === '..' ) continue;
+            
+            // Keep metadata and log
+            if ( $file === 'backup-meta.json' || $file === 'restore.log' ) continue;
+
+            $path = $dir . '/' . $file;
+            if ( is_file( $path ) ) {
+                unlink( $path );
+            }
+        }
+        
+        // Update meta to reflect local deletion
+        $meta_file = $dir . '/backup-meta.json';
+        if ( file_exists( $meta_file ) ) {
+            $meta = json_decode( file_get_contents( $meta_file ), true );
+            $meta['local_deleted'] = true;
+            file_put_contents( $meta_file, wp_json_encode( $meta, JSON_PRETTY_PRINT ) );
+        }
+        
+        return true;
+    }
+
+    private function recursive_rmdir( $dir ) {
+        if ( ! is_dir( $dir ) ) return false;
+
+        $files = array_diff( scandir( $dir ), [ '.', '..' ] );
+        foreach ( $files as $file ) {
+            ( is_dir( "$dir/$file" ) ) ? $this->recursive_rmdir( "$dir/$file" ) : unlink( "$dir/$file" );
+        }
         return rmdir( $dir );
     }
 
     /**
-     * Enforce retention policy - delete old backups.
+     * Enforce retention policy.
      */
     public function enforce_retention() {
         $retention = (int) get_option( 'wprb_retention', 5 );
-        $backups   = $this->list_backups();
+        if ( $retention < 1 ) return;
 
-        if ( count( $backups ) > $retention ) {
-            $to_delete = array_slice( $backups, $retention );
-            foreach ( $to_delete as $backup ) {
-                $this->delete_backup( $backup['id'] );
-            }
+        $backups = $this->list_backups();
+
+        if ( count( $backups ) <= $retention ) {
+            return;
+        }
+
+        $to_delete = array_slice( $backups, $retention );
+
+        foreach ( $to_delete as $backup ) {
+            $this->delete_backup( $backup['id'] );
+            $this->storage_log( 'Retention: Altes Backup gelöscht: ' . $backup['id'] );
         }
     }
 }

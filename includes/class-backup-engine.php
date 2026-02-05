@@ -203,12 +203,32 @@ class WPRB_Backup_Engine {
 
                 // Distribute to configured storage
                 $results = $this->storage->distribute( $backup_id, $state['all_files'] );
+                $upload_errors = false;
 
                 foreach ( $results as $storage => $result ) {
                     if ( ! $result['success'] ) {
                         $state['errors'][] = $storage . ': ' . $result['message'];
+                        $upload_errors = true;
                     }
                     $this->log( $storage . ': ' . $result['message'] );
+                }
+
+                // Clean up local files if not selected as storage (and no upload errors occurred)
+                $active_storage = (array) get_option( 'wprb_storage', [ 'local' ] );
+                if ( ! in_array( 'local', $active_storage ) && ! $upload_errors ) {
+                    // Only delete files if we have at least one successful remote storage
+                    $remote_success = false;
+                    foreach ( $results as $res ) {
+                        if ( $res['success'] ) {
+                            $remote_success = true;
+                            break;
+                        }
+                    }
+
+                    if ( $remote_success ) {
+                        $this->storage->delete_local_files_only( $backup_id );
+                        $this->log( 'Lokale Dateien bereinigt (Nur Cloud-Speicher gewählt).' );
+                    }
                 }
 
                 // Enforce retention

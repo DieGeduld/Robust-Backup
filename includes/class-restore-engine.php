@@ -16,6 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 class WPRB_Restore_Engine {
 
     const PHASE_INIT       = 'init';
+    const PHASE_DOWNLOAD   = 'download';
     const PHASE_SNAPSHOT   = 'snapshot';
     const PHASE_DB         = 'database';
     const PHASE_FILES      = 'files';
@@ -41,19 +42,30 @@ class WPRB_Restore_Engine {
             ? json_decode( file_get_contents( $meta_file ), true )
             : [];
 
-        $has_db    = file_exists( $backup_dir . 'database.sql' );
-        $db_size   = $has_db ? filesize( $backup_dir . 'database.sql' ) : 0;
+        $is_local_deleted = ! empty( $meta['local_deleted'] );
+        
+        $has_db    = file_exists( $backup_dir . 'database.sql' ) || ( $is_local_deleted && in_array( 'database.sql', $meta['files'] ?? [] ) );
+        $db_size   = file_exists( $backup_dir . 'database.sql' ) ? filesize( $backup_dir . 'database.sql' ) : 0;
 
         // Find archive files
         $archives    = [];
         $total_asize = 0;
-        foreach ( glob( $backup_dir . 'files-part*' ) as $archive ) {
-            $size = filesize( $archive );
-            $archives[] = [
-                'name' => basename( $archive ),
-                'size' => size_format( $size ),
-            ];
-            $total_asize += $size;
+        
+        if ( $is_local_deleted && ! empty( $meta['files'] ) ) {
+            foreach ( $meta['files'] as $f ) {
+                if ( strpos( $f, 'files-part' ) === 0 ) {
+                    $archives[] = [ 'name' => $f, 'size' => 'Cloud' ];
+                }
+            }
+        } else {
+            foreach ( glob( $backup_dir . 'files-part*' ) as $archive ) {
+                $size = filesize( $archive );
+                $archives[] = [
+                    'name' => basename( $archive ),
+                    'size' => size_format( $size ),
+                ];
+                $total_asize += $size;
+            }
         }
 
         return [
@@ -63,21 +75,16 @@ class WPRB_Restore_Engine {
             'site_url'     => $meta['site_url'] ?? 'Unbekannt',
             'wp_version'   => $meta['wp_version'] ?? 'Unbekannt',
             'has_db'       => $has_db,
-            'db_size'      => size_format( $db_size ),
+            'db_size'      => $db_size ? size_format( $db_size ) : 'Cloud',
             'archives'     => $archives,
-            'archive_size' => size_format( $total_asize ),
+            'archive_size' => $total_asize ? size_format( $total_asize ) : 'Cloud',
             'has_files'    => ! empty( $archives ),
+            'local_deleted' => $is_local_deleted,
         ];
     }
 
     /**
      * Start restore process.
-     *
-     * @param string $backup_id    The backup to restore.
-     * @param bool   $restore_db   Whether to restore database.
-     * @param bool   $restore_files Whether to restore files.
-     * @param bool   $create_snapshot Whether to create a safety backup first.
-     * @return array
      */
     public function start( $backup_id, $restore_db = true, $restore_files = true, $create_snapshot = true ) {
         // Check if restore is already running
@@ -94,44 +101,60 @@ class WPRB_Restore_Engine {
             return [ 'error' => true, 'message' => 'Backup nicht gefunden.' ];
         }
 
-        // Validate what we can restore
-        $has_db    = file_exists( $backup_dir . 'database.sql' );
-        $archives  = glob( $backup_dir . 'files-part*' );
-        $has_files = ! empty( $archives );
+        $meta_file = $backup_dir . 'backup-meta.json';
+        $meta      = file_exists( $meta_file ) ? json_decode( file_get_contents( $meta_file ), true ) : [];
+        $is_local_deleted = ! empty( $meta['local_deleted'] );
 
-        if ( $restore_db && ! $has_db ) {
-            return [ 'error' => true, 'message' => 'Kein Datenbank-Dump in diesem Backup gefunden.' ];
+        // Initial check, skipped if cloud backup
+        if ( ! $is_local_deleted ) {
+            $has_db    = file_exists( $backup_dir . 'database.sql' );
+            $archives  = glob( $backup_dir . 'files-part*' );
+            $has_files = ! empty( $archives );
+
+            if ( $restore_db && ! $has_db ) {
+                return [ 'error' => true, 'message' => 'Kein Datenbank-Dump in diesem Backup gefunden.' ];
+            }
+            if ( $restore_files && ! $has_files ) {
+                return [ 'error' => true, 'message' => 'Keine Datei-Archive in diesem Backup gefunden.' ];
+            }
         }
 
-        if ( $restore_files && ! $has_files ) {
-            return [ 'error' => true, 'message' => 'Keine Datei-Archive in diesem Backup gefunden.' ];
+        // Determine initial phase
+        $start_phase = $create_snapshot ? self::PHASE_SNAPSHOT : self::PHASE_INIT;
+        $message     = $create_snapshot 
+            ? 'Erstelle Sicherheitskopie vor der Wiederherstellung...' 
+            : 'Wiederherstellung wird vorbereitet...';
+
+        if ( $is_local_deleted ) {
+            $start_phase = self::PHASE_DOWNLOAD;
+            $message     = 'Lade Backup aus der Cloud (Dropbox)...';
         }
 
         $state = [
             'backup_id'       => $backup_id,
             'backup_dir'      => $backup_dir,
-            'phase'           => $create_snapshot ? self::PHASE_SNAPSHOT : self::PHASE_INIT,
+            'phase'           => $start_phase,
             'restore_db'      => $restore_db,
             'restore_files'   => $restore_files,
             'create_snapshot' => $create_snapshot,
             'progress'        => 0,
-            'message'         => $create_snapshot
-                ? 'Erstelle Sicherheitskopie vor der Wiederherstellung...'
-                : 'Wiederherstellung wird vorbereitet...',
+            'message'         => $message,
             'started_at'      => time(),
             'errors'          => [],
             // DB restore state
             'db_file'         => $backup_dir . 'database.sql',
             'db_offset'       => 0,
-            'db_size'         => $has_db ? filesize( $backup_dir . 'database.sql' ) : 0,
+            'db_size'         => 0, // Will be updated after download
             'db_statements'   => 0,
             // File restore state
-            'archives'        => $has_files ? array_map( 'basename', $archives ) : [],
+            'archives'        => [], // Will be updated after download
             'current_archive' => 0,
             'files_extracted' => 0,
             // Snapshot
             'snapshot_id'     => null,
             'snapshot_phase'  => 'pending',
+            // Cloud
+            'download_attempts' => 0,
         ];
 
         update_option( $this->state_key(), $state, false );
@@ -151,6 +174,31 @@ class WPRB_Restore_Engine {
         }
 
         switch ( $state['phase'] ) {
+
+            case self::PHASE_DOWNLOAD:
+                $storage = new WPRB_Storage_Manager();
+                $result  = $storage->download_backup_from_cloud( $state['backup_id'] );
+
+                if ( $result['success'] ) {
+                    // Update state with newly downloaded file info
+                    $backup_dir = $state['backup_dir'];
+                    $has_db     = file_exists( $backup_dir . 'database.sql' );
+                    $archives   = glob( $backup_dir . 'files-part*' );
+
+                    $state['db_size']  = $has_db ? filesize( $backup_dir . 'database.sql' ) : 0;
+                    $state['archives'] = ! empty( $archives ) ? array_map( 'basename', $archives ) : [];
+                    
+                    // Proceed to next phase
+                    $state['message'] = 'Download erfolgreich. Starte Wiederherstellung...';
+                    $state['phase']   = $state['create_snapshot'] ? self::PHASE_SNAPSHOT : self::PHASE_INIT;
+                } else {
+                    $state['errors'][] = 'Download fehlgeschlagen: ' . $result['message'];
+                    $state['phase']    = self::PHASE_DONE;
+                }
+                
+                // For download, we assume it's one atomic step for now (might time out on huge files, but retry logic is complex)
+                $result = $state;
+                break;
 
             case self::PHASE_SNAPSHOT:
                 $result = $this->process_snapshot( $state );

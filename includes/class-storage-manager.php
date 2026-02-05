@@ -195,6 +195,7 @@ class WPRB_Storage_Manager {
         $client_secret = get_option( 'wprb_gdrive_secret', '' );
 
         $response = wp_remote_post( 'https://oauth2.googleapis.com/token', [
+            'timeout' => 30,
             'body' => [
                 'client_id'     => $client_id,
                 'client_secret' => $client_secret,
@@ -223,6 +224,7 @@ class WPRB_Storage_Manager {
      */
     private function gdrive_create_folder( $access_token, $name ) {
         $response = wp_remote_post( 'https://www.googleapis.com/drive/v3/files', [
+            'timeout' => 30,
             'headers' => [
                 'Authorization' => 'Bearer ' . $access_token,
                 'Content-Type'  => 'application/json',
@@ -257,6 +259,7 @@ class WPRB_Storage_Manager {
         $response = wp_remote_post(
             'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable',
             [
+                'timeout' => 30,
                 'headers' => [
                     'Authorization'           => 'Bearer ' . $access_token,
                     'Content-Type'            => 'application/json; charset=UTF-8',
@@ -287,6 +290,7 @@ class WPRB_Storage_Manager {
 
             $response = wp_remote_request( $upload_url, [
                 'method'  => 'PUT',
+                'timeout' => 120,
                 'headers' => [
                     'Content-Length' => $length,
                     'Content-Range'  => "bytes {$offset}-{$end}/{$file_size}",
@@ -336,25 +340,30 @@ class WPRB_Storage_Manager {
         if ( ! $access_token ) {
             return [
                 'success' => false,
-                'message' => 'Dropbox Token konnte nicht erneuert werden.',
+                'message' => 'Dropbox Token konnte nicht erneuert werden. Bitte erneut verbinden.',
             ];
         }
+
+        $this->storage_log( 'Dropbox: Access Token erhalten, starte Upload...' );
 
         $uploaded = 0;
         $errors   = [];
 
         foreach ( $files as $file ) {
             if ( ! file_exists( $file ) ) {
+                $this->storage_log( 'Dropbox: Datei nicht gefunden: ' . $file );
                 continue;
             }
 
-            $dest = '/WP-Backups/' . $backup_id . '/' . basename( $file );
+            $dest   = '/WP-Backups/' . $backup_id . '/' . basename( $file );
             $result = $this->dropbox_upload_file( $access_token, $file, $dest );
 
-            if ( $result ) {
+            if ( $result === true ) {
                 $uploaded++;
+                $this->storage_log( 'Dropbox: Upload OK: ' . basename( $file ) );
             } else {
-                $errors[] = basename( $file );
+                $errors[] = basename( $file ) . ' (' . $result . ')';
+                $this->storage_log( 'Dropbox: Upload FEHLER: ' . basename( $file ) . ' - ' . $result );
             }
         }
 
@@ -374,13 +383,17 @@ class WPRB_Storage_Manager {
      */
     private function dropbox_refresh_token( $token_data ) {
         if ( ! isset( $token_data['refresh_token'] ) ) {
+            $this->storage_log( 'Dropbox: Kein refresh_token vorhanden, verwende access_token direkt.' );
             return $token_data['access_token'] ?? false;
         }
 
         $app_key    = get_option( 'wprb_dropbox_app_key', '' );
         $app_secret = get_option( 'wprb_dropbox_secret', '' );
 
+        $this->storage_log( 'Dropbox: Erneuere Access Token via Refresh Token...' );
+
         $response = wp_remote_post( 'https://api.dropbox.com/oauth2/token', [
+            'timeout' => 30,
             'headers' => [
                 'Authorization' => 'Basic ' . base64_encode( $app_key . ':' . $app_secret ),
             ],
@@ -391,53 +404,99 @@ class WPRB_Storage_Manager {
         ] );
 
         if ( is_wp_error( $response ) ) {
+            $this->storage_log( 'Dropbox: Token-Refresh WP-Error: ' . $response->get_error_message() );
             return false;
         }
 
-        $body = json_decode( wp_remote_retrieve_body( $response ), true );
+        $status = wp_remote_retrieve_response_code( $response );
+        $body   = json_decode( wp_remote_retrieve_body( $response ), true );
+
+        if ( $status !== 200 ) {
+            $error_msg = $body['error_description'] ?? $body['error'] ?? 'HTTP ' . $status;
+            $this->storage_log( 'Dropbox: Token-Refresh fehlgeschlagen: ' . $error_msg );
+            return false;
+        }
 
         if ( isset( $body['access_token'] ) ) {
             $token_data['access_token'] = $body['access_token'];
             update_option( 'wprb_dropbox_token', wp_json_encode( $token_data ) );
+            $this->storage_log( 'Dropbox: Neuer Access Token gespeichert.' );
             return $body['access_token'];
         }
 
+        $this->storage_log( 'Dropbox: Token-Refresh: Kein access_token in Antwort.' );
         return false;
     }
 
     /**
-     * Upload a file to Dropbox using upload sessions (for large files).
+     * Upload a file to Dropbox.
+     * Returns true on success, or an error string on failure.
      */
     private function dropbox_upload_file( $access_token, $filepath, $dest_path ) {
         $file_size  = filesize( $filepath );
         $chunk_size = 8 * 1024 * 1024; // 8 MB chunks
 
-        // Small files: simple upload
-        if ( $file_size <= $chunk_size ) {
-            $response = wp_remote_post( 'https://content.dropboxapi.com/2/files/upload', [
-                'headers' => [
-                    'Authorization'   => 'Bearer ' . $access_token,
-                    'Content-Type'    => 'application/octet-stream',
-                    'Dropbox-API-Arg' => wp_json_encode( [
-                        'path'            => $dest_path,
-                        'mode'            => 'overwrite',
-                        'autorename'      => false,
-                        'mute'            => true,
-                    ] ),
-                ],
-                'body' => file_get_contents( $filepath ),
-            ] );
+        $this->storage_log( sprintf(
+            'Dropbox: Upload starten: %s (%s) → %s',
+            basename( $filepath ),
+            size_format( $file_size ),
+            $dest_path
+        ) );
 
-            return ! is_wp_error( $response ) && wp_remote_retrieve_response_code( $response ) === 200;
+        // Small files (≤8MB): simple upload
+        if ( $file_size <= $chunk_size ) {
+            return $this->dropbox_simple_upload( $access_token, $filepath, $dest_path, $file_size );
         }
 
         // Large files: chunked upload session
+        return $this->dropbox_chunked_upload( $access_token, $filepath, $dest_path, $file_size, $chunk_size );
+    }
+
+    /**
+     * Simple single-request upload for small files.
+     */
+    private function dropbox_simple_upload( $access_token, $filepath, $dest_path, $file_size ) {
+        $response = wp_remote_post( 'https://content.dropboxapi.com/2/files/upload', [
+            'timeout' => 120,
+            'headers' => [
+                'Authorization'   => 'Bearer ' . $access_token,
+                'Content-Type'    => 'application/octet-stream',
+                'Dropbox-API-Arg' => wp_json_encode( [
+                    'path'       => $dest_path,
+                    'mode'       => 'overwrite',
+                    'autorename' => false,
+                    'mute'       => true,
+                ] ),
+            ],
+            'body' => file_get_contents( $filepath ),
+        ] );
+
+        if ( is_wp_error( $response ) ) {
+            return 'WP-Error: ' . $response->get_error_message();
+        }
+
+        $status = wp_remote_retrieve_response_code( $response );
+
+        if ( $status === 200 ) {
+            return true;
+        }
+
+        $body = json_decode( wp_remote_retrieve_body( $response ), true );
+        $error = $body['error_summary'] ?? $body['error'] ?? wp_remote_retrieve_body( $response );
+        return 'HTTP ' . $status . ': ' . ( is_string( $error ) ? $error : wp_json_encode( $error ) );
+    }
+
+    /**
+     * Chunked upload session for large files.
+     */
+    private function dropbox_chunked_upload( $access_token, $filepath, $dest_path, $file_size, $chunk_size ) {
         $fh     = fopen( $filepath, 'rb' );
         $offset = 0;
 
-        // Start session
+        // Step 1: Start session with first chunk
         $chunk = fread( $fh, $chunk_size );
         $response = wp_remote_post( 'https://content.dropboxapi.com/2/files/upload_session/start', [
+            'timeout' => 120,
             'headers' => [
                 'Authorization'   => 'Bearer ' . $access_token,
                 'Content-Type'    => 'application/octet-stream',
@@ -448,7 +507,13 @@ class WPRB_Storage_Manager {
 
         if ( is_wp_error( $response ) ) {
             fclose( $fh );
-            return false;
+            return 'Session start WP-Error: ' . $response->get_error_message();
+        }
+
+        $status = wp_remote_retrieve_response_code( $response );
+        if ( $status !== 200 ) {
+            fclose( $fh );
+            return 'Session start HTTP ' . $status . ': ' . wp_remote_retrieve_body( $response );
         }
 
         $body       = json_decode( wp_remote_retrieve_body( $response ), true );
@@ -456,16 +521,25 @@ class WPRB_Storage_Manager {
 
         if ( ! $session_id ) {
             fclose( $fh );
-            return false;
+            return 'Keine Session-ID erhalten';
         }
 
         $offset += strlen( $chunk );
+        $this->storage_log( 'Dropbox: Upload-Session gestartet: ' . $session_id );
 
-        // Append chunks
-        while ( $offset < $file_size - $chunk_size ) {
-            $chunk = fread( $fh, $chunk_size );
+        // Step 2: Append chunks
+        while ( ! feof( $fh ) ) {
+            $chunk       = fread( $fh, $chunk_size );
+            $chunk_len   = strlen( $chunk );
+            $is_last     = feof( $fh );
+
+            if ( $is_last ) {
+                // Step 3: Finish session with last chunk
+                break;
+            }
 
             $response = wp_remote_post( 'https://content.dropboxapi.com/2/files/upload_session/append_v2', [
+                'timeout' => 120,
                 'headers' => [
                     'Authorization'   => 'Bearer ' . $access_token,
                     'Content-Type'    => 'application/octet-stream',
@@ -482,17 +556,24 @@ class WPRB_Storage_Manager {
 
             if ( is_wp_error( $response ) ) {
                 fclose( $fh );
-                return false;
+                return 'Append WP-Error bei Offset ' . $offset . ': ' . $response->get_error_message();
             }
 
-            $offset += strlen( $chunk );
+            $status = wp_remote_retrieve_response_code( $response );
+            if ( $status !== 200 ) {
+                fclose( $fh );
+                return 'Append HTTP ' . $status . ' bei Offset ' . $offset;
+            }
+
+            $offset += $chunk_len;
+            $this->storage_log( sprintf( 'Dropbox: Chunk hochgeladen: %s / %s', size_format( $offset ), size_format( $file_size ) ) );
         }
 
-        // Finish session with last chunk
-        $chunk = fread( $fh, $chunk_size );
         fclose( $fh );
 
+        // Step 3: Finish session
         $response = wp_remote_post( 'https://content.dropboxapi.com/2/files/upload_session/finish', [
+            'timeout' => 120,
             'headers' => [
                 'Authorization'   => 'Bearer ' . $access_token,
                 'Content-Type'    => 'application/octet-stream',
@@ -509,10 +590,29 @@ class WPRB_Storage_Manager {
                     ],
                 ] ),
             ],
-            'body' => $chunk,
+            'body' => isset( $chunk ) ? $chunk : '',
         ] );
 
-        return ! is_wp_error( $response ) && wp_remote_retrieve_response_code( $response ) === 200;
+        if ( is_wp_error( $response ) ) {
+            return 'Finish WP-Error: ' . $response->get_error_message();
+        }
+
+        $status = wp_remote_retrieve_response_code( $response );
+        if ( $status === 200 ) {
+            return true;
+        }
+
+        $body  = json_decode( wp_remote_retrieve_body( $response ), true );
+        $error = $body['error_summary'] ?? wp_remote_retrieve_body( $response );
+        return 'Finish HTTP ' . $status . ': ' . $error;
+    }
+
+    /**
+     * Log helper for storage operations.
+     */
+    private function storage_log( $message ) {
+        $line = '[' . date( 'Y-m-d H:i:s' ) . '] ' . $message . "\n";
+        file_put_contents( WPRB_LOG_FILE, $line, FILE_APPEND | LOCK_EX );
     }
 
     // ─────────────────────────────────────────────

@@ -1,0 +1,726 @@
+<?php
+/**
+ * Storage Manager
+ * 
+ * Handles uploading backup files to various storage destinations:
+ * - Local (already on server)
+ * - Browser download
+ * - Google Drive
+ * - Dropbox
+ */
+
+if ( ! defined( 'ABSPATH' ) ) {
+    exit;
+}
+
+class WPRB_Storage_Manager {
+
+    /**
+     * Upload backup files to configured storage destinations.
+     *
+     * @param string $backup_id   The backup identifier.
+     * @param array  $files       Array of absolute file paths.
+     * @return array Results per storage type.
+     */
+    public function distribute( $backup_id, $files ) {
+        $storages = (array) get_option( 'wprb_storage', [ 'local' ] );
+        $results  = [];
+
+        foreach ( $storages as $storage ) {
+            switch ( $storage ) {
+                case 'local':
+                    $results['local'] = $this->store_local( $backup_id, $files );
+                    break;
+                case 'gdrive':
+                    $results['gdrive'] = $this->store_gdrive( $backup_id, $files );
+                    break;
+                case 'dropbox':
+                    $results['dropbox'] = $this->store_dropbox( $backup_id, $files );
+                    break;
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * Local storage: files are already in place, just log it.
+     */
+    private function store_local( $backup_id, $files ) {
+        $total_size = 0;
+        foreach ( $files as $file ) {
+            if ( file_exists( $file ) ) {
+                $total_size += filesize( $file );
+            }
+        }
+
+        return [
+            'success' => true,
+            'message' => sprintf(
+                'Lokal gespeichert: %d Datei(en), %s',
+                count( $files ),
+                size_format( $total_size )
+            ),
+            'path'    => WPRB_BACKUP_DIR . $backup_id . '/',
+        ];
+    }
+
+    /**
+     * Get download URL for a backup file.
+     */
+    public function get_download_url( $backup_id, $filename ) {
+        return add_query_arg( [
+            'action'    => 'wprb_download',
+            'backup_id' => sanitize_file_name( $backup_id ),
+            'file'      => sanitize_file_name( $filename ),
+            '_wpnonce'  => wp_create_nonce( 'wprb_download_' . $backup_id ),
+        ], admin_url( 'admin-ajax.php' ) );
+    }
+
+    /**
+     * Handle file download streaming.
+     */
+    public function stream_download() {
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_die( 'Unauthorized' );
+        }
+
+        $backup_id = sanitize_file_name( $_GET['backup_id'] ?? '' );
+        $filename  = sanitize_file_name( $_GET['file'] ?? '' );
+        $nonce     = $_GET['_wpnonce'] ?? '';
+
+        if ( ! wp_verify_nonce( $nonce, 'wprb_download_' . $backup_id ) ) {
+            wp_die( 'Invalid nonce' );
+        }
+
+        $filepath = WPRB_BACKUP_DIR . $backup_id . '/' . $filename;
+
+        if ( ! file_exists( $filepath ) ) {
+            wp_die( 'File not found' );
+        }
+
+        // Stream the file
+        $size = filesize( $filepath );
+
+        header( 'Content-Description: File Transfer' );
+        header( 'Content-Type: application/octet-stream' );
+        header( 'Content-Disposition: attachment; filename="' . $filename . '"' );
+        header( 'Content-Transfer-Encoding: binary' );
+        header( 'Content-Length: ' . $size );
+        header( 'Cache-Control: must-revalidate' );
+        header( 'Pragma: public' );
+
+        // Flush output buffer
+        if ( ob_get_level() ) {
+            ob_end_clean();
+        }
+
+        // Stream in 8KB chunks
+        $fh = fopen( $filepath, 'rb' );
+        while ( ! feof( $fh ) ) {
+            echo fread( $fh, 8192 );
+            flush();
+        }
+        fclose( $fh );
+
+        exit;
+    }
+
+    // ─────────────────────────────────────────────
+    // Google Drive
+    // ─────────────────────────────────────────────
+
+    /**
+     * Upload to Google Drive using chunked/resumable upload.
+     */
+    private function store_gdrive( $backup_id, $files ) {
+        $token = get_option( 'wprb_gdrive_token', '' );
+        if ( empty( $token ) ) {
+            return [
+                'success' => false,
+                'message' => 'Google Drive nicht konfiguriert. Bitte Token in den Einstellungen hinterlegen.',
+            ];
+        }
+
+        $token_data = json_decode( $token, true );
+        $access_token = $this->gdrive_refresh_token( $token_data );
+
+        if ( ! $access_token ) {
+            return [
+                'success' => false,
+                'message' => 'Google Drive Token konnte nicht erneuert werden.',
+            ];
+        }
+
+        // Create a folder for this backup
+        $folder_id = $this->gdrive_create_folder( $access_token, 'WP-Backup-' . $backup_id );
+
+        $uploaded = 0;
+        $errors   = [];
+
+        foreach ( $files as $file ) {
+            if ( ! file_exists( $file ) ) {
+                continue;
+            }
+
+            $result = $this->gdrive_upload_file( $access_token, $file, $folder_id );
+
+            if ( $result ) {
+                $uploaded++;
+            } else {
+                $errors[] = basename( $file );
+            }
+        }
+
+        return [
+            'success' => empty( $errors ),
+            'message' => sprintf(
+                'Google Drive: %d/%d Datei(en) hochgeladen.%s',
+                $uploaded,
+                count( $files ),
+                ! empty( $errors ) ? ' Fehler bei: ' . implode( ', ', $errors ) : ''
+            ),
+        ];
+    }
+
+    /**
+     * Refresh Google Drive access token.
+     */
+    private function gdrive_refresh_token( $token_data ) {
+        if ( ! isset( $token_data['refresh_token'] ) ) {
+            return $token_data['access_token'] ?? false;
+        }
+
+        $client_id     = get_option( 'wprb_gdrive_client_id', '' );
+        $client_secret = get_option( 'wprb_gdrive_secret', '' );
+
+        $response = wp_remote_post( 'https://oauth2.googleapis.com/token', [
+            'body' => [
+                'client_id'     => $client_id,
+                'client_secret' => $client_secret,
+                'refresh_token' => $token_data['refresh_token'],
+                'grant_type'    => 'refresh_token',
+            ],
+        ] );
+
+        if ( is_wp_error( $response ) ) {
+            return false;
+        }
+
+        $body = json_decode( wp_remote_retrieve_body( $response ), true );
+
+        if ( isset( $body['access_token'] ) ) {
+            $token_data['access_token'] = $body['access_token'];
+            update_option( 'wprb_gdrive_token', wp_json_encode( $token_data ) );
+            return $body['access_token'];
+        }
+
+        return false;
+    }
+
+    /**
+     * Create a folder on Google Drive.
+     */
+    private function gdrive_create_folder( $access_token, $name ) {
+        $response = wp_remote_post( 'https://www.googleapis.com/drive/v3/files', [
+            'headers' => [
+                'Authorization' => 'Bearer ' . $access_token,
+                'Content-Type'  => 'application/json',
+            ],
+            'body' => wp_json_encode( [
+                'name'     => $name,
+                'mimeType' => 'application/vnd.google-apps.folder',
+            ] ),
+        ] );
+
+        if ( is_wp_error( $response ) ) {
+            return null;
+        }
+
+        $body = json_decode( wp_remote_retrieve_body( $response ), true );
+        return $body['id'] ?? null;
+    }
+
+    /**
+     * Upload a file to Google Drive using resumable upload (for large files).
+     */
+    private function gdrive_upload_file( $access_token, $filepath, $folder_id ) {
+        $filename  = basename( $filepath );
+        $file_size = filesize( $filepath );
+
+        // Step 1: Initiate resumable upload session
+        $metadata = wp_json_encode( [
+            'name'    => $filename,
+            'parents' => $folder_id ? [ $folder_id ] : [],
+        ] );
+
+        $response = wp_remote_post(
+            'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable',
+            [
+                'headers' => [
+                    'Authorization'           => 'Bearer ' . $access_token,
+                    'Content-Type'            => 'application/json; charset=UTF-8',
+                    'X-Upload-Content-Length'  => $file_size,
+                ],
+                'body' => $metadata,
+            ]
+        );
+
+        if ( is_wp_error( $response ) ) {
+            return false;
+        }
+
+        $upload_url = wp_remote_retrieve_header( $response, 'location' );
+        if ( empty( $upload_url ) ) {
+            return false;
+        }
+
+        // Step 2: Upload in 5MB chunks
+        $chunk_size = 5 * 1024 * 1024; // 5 MB
+        $fh         = fopen( $filepath, 'rb' );
+        $offset     = 0;
+
+        while ( $offset < $file_size ) {
+            $chunk  = fread( $fh, $chunk_size );
+            $length = strlen( $chunk );
+            $end    = $offset + $length - 1;
+
+            $response = wp_remote_request( $upload_url, [
+                'method'  => 'PUT',
+                'headers' => [
+                    'Content-Length' => $length,
+                    'Content-Range'  => "bytes {$offset}-{$end}/{$file_size}",
+                ],
+                'body' => $chunk,
+            ] );
+
+            $status = wp_remote_retrieve_response_code( $response );
+
+            if ( $status === 200 || $status === 201 ) {
+                // Upload complete
+                fclose( $fh );
+                return true;
+            } elseif ( $status === 308 ) {
+                // Chunk accepted, continue
+                $offset += $length;
+            } else {
+                // Error
+                fclose( $fh );
+                return false;
+            }
+        }
+
+        fclose( $fh );
+        return true;
+    }
+
+    // ─────────────────────────────────────────────
+    // Dropbox
+    // ─────────────────────────────────────────────
+
+    /**
+     * Upload to Dropbox using chunked upload sessions.
+     */
+    private function store_dropbox( $backup_id, $files ) {
+        $token = get_option( 'wprb_dropbox_token', '' );
+        if ( empty( $token ) ) {
+            return [
+                'success' => false,
+                'message' => 'Dropbox nicht konfiguriert. Bitte Token in den Einstellungen hinterlegen.',
+            ];
+        }
+
+        $token_data   = json_decode( $token, true );
+        $access_token = $this->dropbox_refresh_token( $token_data );
+
+        if ( ! $access_token ) {
+            return [
+                'success' => false,
+                'message' => 'Dropbox Token konnte nicht erneuert werden.',
+            ];
+        }
+
+        $uploaded = 0;
+        $errors   = [];
+
+        foreach ( $files as $file ) {
+            if ( ! file_exists( $file ) ) {
+                continue;
+            }
+
+            $dest = '/WP-Backups/' . $backup_id . '/' . basename( $file );
+            $result = $this->dropbox_upload_file( $access_token, $file, $dest );
+
+            if ( $result ) {
+                $uploaded++;
+            } else {
+                $errors[] = basename( $file );
+            }
+        }
+
+        return [
+            'success' => empty( $errors ),
+            'message' => sprintf(
+                'Dropbox: %d/%d Datei(en) hochgeladen.%s',
+                $uploaded,
+                count( $files ),
+                ! empty( $errors ) ? ' Fehler bei: ' . implode( ', ', $errors ) : ''
+            ),
+        ];
+    }
+
+    /**
+     * Refresh Dropbox access token.
+     */
+    private function dropbox_refresh_token( $token_data ) {
+        if ( ! isset( $token_data['refresh_token'] ) ) {
+            return $token_data['access_token'] ?? false;
+        }
+
+        $app_key    = get_option( 'wprb_dropbox_app_key', '' );
+        $app_secret = get_option( 'wprb_dropbox_secret', '' );
+
+        $response = wp_remote_post( 'https://api.dropbox.com/oauth2/token', [
+            'headers' => [
+                'Authorization' => 'Basic ' . base64_encode( $app_key . ':' . $app_secret ),
+            ],
+            'body' => [
+                'grant_type'    => 'refresh_token',
+                'refresh_token' => $token_data['refresh_token'],
+            ],
+        ] );
+
+        if ( is_wp_error( $response ) ) {
+            return false;
+        }
+
+        $body = json_decode( wp_remote_retrieve_body( $response ), true );
+
+        if ( isset( $body['access_token'] ) ) {
+            $token_data['access_token'] = $body['access_token'];
+            update_option( 'wprb_dropbox_token', wp_json_encode( $token_data ) );
+            return $body['access_token'];
+        }
+
+        return false;
+    }
+
+    /**
+     * Upload a file to Dropbox using upload sessions (for large files).
+     */
+    private function dropbox_upload_file( $access_token, $filepath, $dest_path ) {
+        $file_size  = filesize( $filepath );
+        $chunk_size = 8 * 1024 * 1024; // 8 MB chunks
+
+        // Small files: simple upload
+        if ( $file_size <= $chunk_size ) {
+            $response = wp_remote_post( 'https://content.dropboxapi.com/2/files/upload', [
+                'headers' => [
+                    'Authorization'   => 'Bearer ' . $access_token,
+                    'Content-Type'    => 'application/octet-stream',
+                    'Dropbox-API-Arg' => wp_json_encode( [
+                        'path'            => $dest_path,
+                        'mode'            => 'overwrite',
+                        'autorename'      => false,
+                        'mute'            => true,
+                    ] ),
+                ],
+                'body' => file_get_contents( $filepath ),
+            ] );
+
+            return ! is_wp_error( $response ) && wp_remote_retrieve_response_code( $response ) === 200;
+        }
+
+        // Large files: chunked upload session
+        $fh     = fopen( $filepath, 'rb' );
+        $offset = 0;
+
+        // Start session
+        $chunk = fread( $fh, $chunk_size );
+        $response = wp_remote_post( 'https://content.dropboxapi.com/2/files/upload_session/start', [
+            'headers' => [
+                'Authorization'   => 'Bearer ' . $access_token,
+                'Content-Type'    => 'application/octet-stream',
+                'Dropbox-API-Arg' => wp_json_encode( [ 'close' => false ] ),
+            ],
+            'body' => $chunk,
+        ] );
+
+        if ( is_wp_error( $response ) ) {
+            fclose( $fh );
+            return false;
+        }
+
+        $body       = json_decode( wp_remote_retrieve_body( $response ), true );
+        $session_id = $body['session_id'] ?? null;
+
+        if ( ! $session_id ) {
+            fclose( $fh );
+            return false;
+        }
+
+        $offset += strlen( $chunk );
+
+        // Append chunks
+        while ( $offset < $file_size - $chunk_size ) {
+            $chunk = fread( $fh, $chunk_size );
+
+            $response = wp_remote_post( 'https://content.dropboxapi.com/2/files/upload_session/append_v2', [
+                'headers' => [
+                    'Authorization'   => 'Bearer ' . $access_token,
+                    'Content-Type'    => 'application/octet-stream',
+                    'Dropbox-API-Arg' => wp_json_encode( [
+                        'cursor' => [
+                            'session_id' => $session_id,
+                            'offset'     => $offset,
+                        ],
+                        'close' => false,
+                    ] ),
+                ],
+                'body' => $chunk,
+            ] );
+
+            if ( is_wp_error( $response ) ) {
+                fclose( $fh );
+                return false;
+            }
+
+            $offset += strlen( $chunk );
+        }
+
+        // Finish session with last chunk
+        $chunk = fread( $fh, $chunk_size );
+        fclose( $fh );
+
+        $response = wp_remote_post( 'https://content.dropboxapi.com/2/files/upload_session/finish', [
+            'headers' => [
+                'Authorization'   => 'Bearer ' . $access_token,
+                'Content-Type'    => 'application/octet-stream',
+                'Dropbox-API-Arg' => wp_json_encode( [
+                    'cursor' => [
+                        'session_id' => $session_id,
+                        'offset'     => $offset,
+                    ],
+                    'commit' => [
+                        'path'       => $dest_path,
+                        'mode'       => 'overwrite',
+                        'autorename' => false,
+                        'mute'       => true,
+                    ],
+                ] ),
+            ],
+            'body' => $chunk,
+        ] );
+
+        return ! is_wp_error( $response ) && wp_remote_retrieve_response_code( $response ) === 200;
+    }
+
+    // ─────────────────────────────────────────────
+    // OAuth Helper (shared redirect handler)
+    // ─────────────────────────────────────────────
+
+    /**
+     * Get the OAuth callback URL.
+     */
+    public static function get_oauth_redirect_url() {
+        return admin_url( 'admin.php?page=wp-robust-backup&tab=settings&oauth_callback=1' );
+    }
+
+    /**
+     * Get Google Drive authorization URL.
+     */
+    public function get_gdrive_auth_url() {
+        $client_id = get_option( 'wprb_gdrive_client_id', '' );
+        if ( empty( $client_id ) ) {
+            return '';
+        }
+
+        return add_query_arg( [
+            'client_id'     => $client_id,
+            'redirect_uri'  => self::get_oauth_redirect_url(),
+            'response_type' => 'code',
+            'scope'         => 'https://www.googleapis.com/auth/drive.file',
+            'access_type'   => 'offline',
+            'prompt'        => 'consent',
+            'state'         => 'gdrive',
+        ], 'https://accounts.google.com/o/oauth2/v2/auth' );
+    }
+
+    /**
+     * Get Dropbox authorization URL.
+     */
+    public function get_dropbox_auth_url() {
+        $app_key = get_option( 'wprb_dropbox_app_key', '' );
+        if ( empty( $app_key ) ) {
+            return '';
+        }
+
+        return add_query_arg( [
+            'client_id'     => $app_key,
+            'redirect_uri'  => self::get_oauth_redirect_url(),
+            'response_type' => 'code',
+            'token_access_type' => 'offline',
+            'state'         => 'dropbox',
+        ], 'https://www.dropbox.com/oauth2/authorize' );
+    }
+
+    /**
+     * Exchange OAuth code for tokens.
+     */
+    public function handle_oauth_callback() {
+        if ( ! isset( $_GET['oauth_callback'] ) || ! isset( $_GET['code'] ) ) {
+            return;
+        }
+
+        if ( ! current_user_can( 'manage_options' ) ) {
+            return;
+        }
+
+        $code  = sanitize_text_field( $_GET['code'] );
+        $state = sanitize_text_field( $_GET['state'] ?? '' );
+
+        if ( $state === 'gdrive' ) {
+            $this->gdrive_exchange_code( $code );
+        } elseif ( $state === 'dropbox' ) {
+            $this->dropbox_exchange_code( $code );
+        }
+    }
+
+    private function gdrive_exchange_code( $code ) {
+        $response = wp_remote_post( 'https://oauth2.googleapis.com/token', [
+            'body' => [
+                'code'          => $code,
+                'client_id'     => get_option( 'wprb_gdrive_client_id' ),
+                'client_secret' => get_option( 'wprb_gdrive_secret' ),
+                'redirect_uri'  => self::get_oauth_redirect_url(),
+                'grant_type'    => 'authorization_code',
+            ],
+        ] );
+
+        if ( ! is_wp_error( $response ) ) {
+            $body = json_decode( wp_remote_retrieve_body( $response ), true );
+            if ( isset( $body['access_token'] ) ) {
+                update_option( 'wprb_gdrive_token', wp_json_encode( $body ) );
+            }
+        }
+    }
+
+    private function dropbox_exchange_code( $code ) {
+        $response = wp_remote_post( 'https://api.dropbox.com/oauth2/token', [
+            'headers' => [
+                'Authorization' => 'Basic ' . base64_encode(
+                    get_option( 'wprb_dropbox_app_key' ) . ':' . get_option( 'wprb_dropbox_secret' )
+                ),
+            ],
+            'body' => [
+                'code'         => $code,
+                'grant_type'   => 'authorization_code',
+                'redirect_uri' => self::get_oauth_redirect_url(),
+            ],
+        ] );
+
+        if ( ! is_wp_error( $response ) ) {
+            $body = json_decode( wp_remote_retrieve_body( $response ), true );
+            if ( isset( $body['access_token'] ) ) {
+                update_option( 'wprb_dropbox_token', wp_json_encode( $body ) );
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────
+    // Backup Management
+    // ─────────────────────────────────────────────
+
+    /**
+     * List all local backups.
+     */
+    public function list_backups() {
+        $backups = [];
+
+        if ( ! is_dir( WPRB_BACKUP_DIR ) ) {
+            return $backups;
+        }
+
+        $dirs = glob( WPRB_BACKUP_DIR . 'backup-*', GLOB_ONLYDIR );
+
+        foreach ( $dirs as $dir ) {
+            $backup_id = basename( $dir );
+            $files     = glob( $dir . '/*' );
+            $size      = 0;
+
+            $file_info = [];
+            foreach ( $files as $file ) {
+                if ( is_file( $file ) && basename( $file ) !== 'file_list.txt' ) {
+                    $fsize = filesize( $file );
+                    $size += $fsize;
+                    $file_info[] = [
+                        'name' => basename( $file ),
+                        'size' => size_format( $fsize ),
+                        'url'  => $this->get_download_url( $backup_id, basename( $file ) ),
+                    ];
+                }
+            }
+
+            $meta_file = $dir . '/backup-meta.json';
+            $meta = file_exists( $meta_file ) ? json_decode( file_get_contents( $meta_file ), true ) : [];
+
+            $backups[] = [
+                'id'         => $backup_id,
+                'date'       => $meta['date'] ?? date( 'Y-m-d H:i:s', filemtime( $dir ) ),
+                'size'       => size_format( $size ),
+                'size_raw'   => $size,
+                'type'       => $meta['type'] ?? 'full',
+                'files'      => $file_info,
+                'file_count' => count( $file_info ),
+            ];
+        }
+
+        // Sort newest first
+        usort( $backups, function( $a, $b ) {
+            return strcmp( $b['date'], $a['date'] );
+        } );
+
+        return $backups;
+    }
+
+    /**
+     * Delete a backup.
+     */
+    public function delete_backup( $backup_id ) {
+        $dir = WPRB_BACKUP_DIR . sanitize_file_name( $backup_id );
+
+        if ( ! is_dir( $dir ) ) {
+            return false;
+        }
+
+        $files = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator( $dir, RecursiveDirectoryIterator::SKIP_DOTS ),
+            RecursiveIteratorIterator::CHILD_FIRST
+        );
+
+        foreach ( $files as $file ) {
+            if ( $file->isDir() ) {
+                rmdir( $file->getRealPath() );
+            } else {
+                unlink( $file->getRealPath() );
+            }
+        }
+
+        return rmdir( $dir );
+    }
+
+    /**
+     * Enforce retention policy - delete old backups.
+     */
+    public function enforce_retention() {
+        $retention = (int) get_option( 'wprb_retention', 5 );
+        $backups   = $this->list_backups();
+
+        if ( count( $backups ) > $retention ) {
+            $to_delete = array_slice( $backups, $retention );
+            foreach ( $to_delete as $backup ) {
+                $this->delete_backup( $backup['id'] );
+            }
+        }
+    }
+}

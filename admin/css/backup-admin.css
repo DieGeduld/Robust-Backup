@@ -1,0 +1,303 @@
+/**
+ * WP Robust Backup - Admin Styles
+ */
+
+/* Layout */
+.wprb-wrap {
+    max-width: 1200px;
+}
+
+.wprb-wrap h1 {
+    display: flex;
+    align-items: center;
+    font-size: 23px;
+    font-weight: 400;
+    margin: 10px 0 15px;
+}
+
+.wprb-tabs .dashicons {
+    font-size: 16px;
+    width: 16px;
+    height: 16px;
+    margin-right: 4px;
+    vertical-align: middle;
+}
+
+.wprb-content {
+    margin-top: 20px;
+}
+
+/* Cards */
+.wprb-card {
+    background: #fff;
+    border: 1px solid #c3c4c7;
+    border-radius: 4px;
+    padding: 20px 24px;
+    margin-bottom: 20px;
+    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.04);
+}
+
+.wprb-card h2 {
+    margin-top: 0;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #f0f0f1;
+    font-size: 18px;
+}
+
+.wprb-card h3 {
+    margin-top: 24px;
+    margin-bottom: 8px;
+    font-size: 15px;
+}
+
+.wprb-card-primary {
+    border-left: 4px solid #2271b1;
+}
+
+.wprb-card-small h3 {
+    margin-top: 0;
+    font-size: 13px;
+    text-transform: uppercase;
+    color: #646970;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+}
+
+/* Dashboard Grid */
+.wprb-dashboard-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.wprb-info-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+}
+
+.wprb-big-text {
+    font-size: 18px;
+    font-weight: 600;
+    color: #1d2327;
+    margin: 8px 0 4px;
+}
+
+.wprb-muted {
+    color: #646970;
+    font-size: 13px;
+}
+
+/* Backup Action Buttons */
+.wprb-backup-actions {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin: 16px 0;
+}
+
+.wprb-backup-actions .button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.wprb-backup-actions .button .dashicons {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+}
+
+.wprb-backup-actions .button-hero {
+    font-size: 15px;
+    padding: 8px 24px;
+    height: auto;
+}
+
+/* Progress Bar */
+.wprb-progress-bar-wrapper {
+    margin: 20px 0 12px;
+}
+
+.wprb-progress-bar {
+    width: 100%;
+    height: 28px;
+    background: #f0f0f1;
+    border-radius: 14px;
+    overflow: hidden;
+    position: relative;
+}
+
+.wprb-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #2271b1, #135e96);
+    border-radius: 14px;
+    transition: width 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 40px;
+    position: relative;
+}
+
+.wprb-progress-fill span {
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.wprb-progress-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    font-size: 13px;
+}
+
+#wprb-progress-message {
+    color: #1d2327;
+    font-weight: 500;
+}
+
+/* Cancel Button */
+.wprb-cancel-backup {
+    display: inline-flex !important;
+    align-items: center;
+    gap: 4px;
+    color: #d63638 !important;
+    border-color: #d63638 !important;
+}
+
+.wprb-cancel-backup:hover {
+    background: #d63638 !important;
+    color: #fff !important;
+}
+
+.wprb-cancel-backup .dashicons {
+    font-size: 16px;
+    width: 16px;
+    height: 16px;
+}
+
+/* Notices */
+.wprb-notice {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    border-radius: 4px;
+    font-size: 14px;
+    margin: 12px 0;
+}
+
+.wprb-notice-success {
+    background: #edfaef;
+    border: 1px solid #00a32a;
+    color: #00a32a;
+}
+
+.wprb-notice-error {
+    background: #fcf0f1;
+    border: 1px solid #d63638;
+    color: #d63638;
+}
+
+.wprb-notice .dashicons {
+    font-size: 20px;
+    width: 20px;
+    height: 20px;
+}
+
+/* Backup Table */
+.wprb-backup-table .wprb-file-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    text-decoration: none;
+    font-size: 13px;
+    margin: 2px 0;
+}
+
+.wprb-backup-table .wprb-file-link .dashicons {
+    font-size: 14px;
+    width: 14px;
+    height: 14px;
+    color: #2271b1;
+}
+
+.wprb-backup-table .wprb-file-link small {
+    color: #646970;
+}
+
+.wprb-backup-table code {
+    font-size: 12px;
+    padding: 2px 6px;
+    background: #f0f0f1;
+    border-radius: 3px;
+}
+
+/* Delete button */
+.wprb-delete-backup {
+    display: inline-flex !important;
+    align-items: center;
+    gap: 4px;
+}
+
+.wprb-delete-backup .dashicons {
+    font-size: 14px;
+    width: 14px;
+    height: 14px;
+}
+
+/* Status indicators */
+.wprb-status-ok {
+    color: #00a32a;
+    font-weight: 600;
+}
+
+/* Log viewer */
+.wprb-log-viewer {
+    background: #1d2327;
+    color: #c3c4c7;
+    padding: 16px 20px;
+    border-radius: 4px;
+    font-size: 12px;
+    line-height: 1.6;
+    max-height: 500px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    font-family: 'SF Mono', 'Consolas', 'Liberation Mono', monospace;
+}
+
+/* Form table overrides */
+.wprb-card .form-table th {
+    width: 200px;
+    font-weight: 500;
+}
+
+.wprb-card .form-table td .description {
+    margin-top: 4px;
+    font-style: normal;
+}
+
+/* Responsive */
+@media screen and (max-width: 782px) {
+    .wprb-info-cards {
+        grid-template-columns: 1fr;
+    }
+
+    .wprb-backup-actions {
+        flex-direction: column;
+    }
+
+    .wprb-backup-actions .button {
+        width: 100%;
+        justify-content: center;
+    }
+
+    .wprb-card .form-table th {
+        width: auto;
+    }
+}

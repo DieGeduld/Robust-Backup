@@ -1,0 +1,178 @@
+<?php
+/**
+ * AJAX Handler
+ * 
+ * Handles all AJAX requests from the admin UI.
+ */
+
+if ( ! defined( 'ABSPATH' ) ) {
+    exit;
+}
+
+class WPRB_Ajax_Handler {
+
+    public function __construct() {
+        // Backup operations
+        add_action( 'wp_ajax_wprb_start_backup', [ $this, 'start_backup' ] );
+        add_action( 'wp_ajax_wprb_process_backup', [ $this, 'process_backup' ] );
+        add_action( 'wp_ajax_wprb_cancel_backup', [ $this, 'cancel_backup' ] );
+        add_action( 'wp_ajax_wprb_get_status', [ $this, 'get_status' ] );
+        add_action( 'wp_ajax_wprb_delete_backup', [ $this, 'delete_backup' ] );
+        add_action( 'wp_ajax_wprb_list_backups', [ $this, 'list_backups' ] );
+        add_action( 'wp_ajax_wprb_save_settings', [ $this, 'save_settings' ] );
+
+        // Download handler
+        add_action( 'wp_ajax_wprb_download', [ $this, 'handle_download' ] );
+    }
+
+    /**
+     * Verify request.
+     */
+    private function verify( $action = 'wprb_nonce' ) {
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_send_json_error( [ 'message' => 'Keine Berechtigung.' ] );
+        }
+
+        if ( ! check_ajax_referer( $action, 'nonce', false ) ) {
+            wp_send_json_error( [ 'message' => 'Ungültiger Sicherheitstoken.' ] );
+        }
+    }
+
+    /**
+     * Start a new backup.
+     */
+    public function start_backup() {
+        $this->verify();
+
+        $type   = sanitize_text_field( $_POST['type'] ?? 'full' );
+        $engine = new WPRB_Backup_Engine();
+        $result = $engine->start( $type );
+
+        if ( isset( $result['error'] ) && $result['error'] === true ) {
+            wp_send_json_error( $result );
+        }
+
+        wp_send_json_success( $result );
+    }
+
+    /**
+     * Process next backup step.
+     */
+    public function process_backup() {
+        $this->verify();
+
+        // Increase limits for this request
+        @set_time_limit( 120 );
+        @ini_set( 'memory_limit', '512M' );
+
+        $engine = new WPRB_Backup_Engine();
+        $result = $engine->process_next();
+
+        if ( isset( $result['error'] ) && $result['error'] === true ) {
+            wp_send_json_error( $result );
+        }
+
+        wp_send_json_success( $result );
+    }
+
+    /**
+     * Cancel running backup.
+     */
+    public function cancel_backup() {
+        $this->verify();
+
+        $engine = new WPRB_Backup_Engine();
+        $result = $engine->cancel();
+
+        wp_send_json_success( $result );
+    }
+
+    /**
+     * Get current status.
+     */
+    public function get_status() {
+        $this->verify();
+
+        $engine = new WPRB_Backup_Engine();
+        wp_send_json_success( $engine->get_status() );
+    }
+
+    /**
+     * Delete a backup.
+     */
+    public function delete_backup() {
+        $this->verify();
+
+        $backup_id = sanitize_file_name( $_POST['backup_id'] ?? '' );
+        if ( empty( $backup_id ) ) {
+            wp_send_json_error( [ 'message' => 'Keine Backup-ID angegeben.' ] );
+        }
+
+        $storage = new WPRB_Storage_Manager();
+        $result  = $storage->delete_backup( $backup_id );
+
+        if ( $result ) {
+            wp_send_json_success( [ 'message' => 'Backup gelöscht.' ] );
+        } else {
+            wp_send_json_error( [ 'message' => 'Backup konnte nicht gelöscht werden.' ] );
+        }
+    }
+
+    /**
+     * List all backups.
+     */
+    public function list_backups() {
+        $this->verify();
+
+        $storage = new WPRB_Storage_Manager();
+        wp_send_json_success( [ 'backups' => $storage->list_backups() ] );
+    }
+
+    /**
+     * Save settings.
+     */
+    public function save_settings() {
+        $this->verify();
+
+        $settings = [
+            'wprb_schedule'        => sanitize_text_field( $_POST['schedule'] ?? 'daily' ),
+            'wprb_schedule_time'   => sanitize_text_field( $_POST['schedule_time'] ?? '03:00' ),
+            'wprb_retention'       => intval( $_POST['retention'] ?? 5 ),
+            'wprb_storage'         => array_map( 'sanitize_text_field', (array) ( $_POST['storage'] ?? [ 'local' ] ) ),
+            'wprb_db_chunk_size'   => max( 100, intval( $_POST['db_chunk_size'] ?? 1000 ) ),
+            'wprb_file_batch_size' => max( 50, intval( $_POST['file_batch_size'] ?? 200 ) ),
+            'wprb_exclude_dirs'    => sanitize_textarea_field( $_POST['exclude_dirs'] ?? '' ),
+            'wprb_max_archive_size' => max( 50, intval( $_POST['max_archive_size'] ?? 500 ) ),
+        ];
+
+        // Google Drive
+        if ( isset( $_POST['gdrive_client_id'] ) ) {
+            $settings['wprb_gdrive_client_id'] = sanitize_text_field( $_POST['gdrive_client_id'] );
+            $settings['wprb_gdrive_secret']    = sanitize_text_field( $_POST['gdrive_secret'] );
+        }
+
+        // Dropbox
+        if ( isset( $_POST['dropbox_app_key'] ) ) {
+            $settings['wprb_dropbox_app_key'] = sanitize_text_field( $_POST['dropbox_app_key'] );
+            $settings['wprb_dropbox_secret']  = sanitize_text_field( $_POST['dropbox_secret'] );
+        }
+
+        foreach ( $settings as $key => $value ) {
+            update_option( $key, $value );
+        }
+
+        // Re-schedule cron
+        WPRB_Backup_Scheduler::unschedule();
+        WPRB_Backup_Scheduler::schedule();
+
+        wp_send_json_success( [ 'message' => 'Einstellungen gespeichert.' ] );
+    }
+
+    /**
+     * Handle file download.
+     */
+    public function handle_download() {
+        $storage = new WPRB_Storage_Manager();
+        $storage->stream_download();
+    }
+}

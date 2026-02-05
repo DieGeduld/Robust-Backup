@@ -21,6 +21,13 @@ class WPRB_Ajax_Handler {
         add_action( 'wp_ajax_wprb_list_backups', [ $this, 'list_backups' ] );
         add_action( 'wp_ajax_wprb_save_settings', [ $this, 'save_settings' ] );
 
+        // Restore operations
+        add_action( 'wp_ajax_wprb_analyze_backup', [ $this, 'analyze_backup' ] );
+        add_action( 'wp_ajax_wprb_start_restore', [ $this, 'start_restore' ] );
+        add_action( 'wp_ajax_wprb_process_restore', [ $this, 'process_restore' ] );
+        add_action( 'wp_ajax_wprb_cancel_restore', [ $this, 'cancel_restore' ] );
+        add_action( 'wp_ajax_wprb_get_restore_status', [ $this, 'get_restore_status' ] );
+
         // Download handler
         add_action( 'wp_ajax_wprb_download', [ $this, 'handle_download' ] );
     }
@@ -174,5 +181,98 @@ class WPRB_Ajax_Handler {
     public function handle_download() {
         $storage = new WPRB_Storage_Manager();
         $storage->stream_download();
+    }
+
+    // ─────────────────────────────────────────────
+    // Restore Operations
+    // ─────────────────────────────────────────────
+
+    /**
+     * Analyze a backup for restore.
+     */
+    public function analyze_backup() {
+        $this->verify();
+
+        $backup_id = sanitize_file_name( $_POST['backup_id'] ?? '' );
+        if ( empty( $backup_id ) ) {
+            wp_send_json_error( [ 'message' => 'Keine Backup-ID angegeben.' ] );
+        }
+
+        $engine = new WPRB_Restore_Engine();
+        $result = $engine->analyze( $backup_id );
+
+        if ( isset( $result['error'] ) && $result['error'] ) {
+            wp_send_json_error( $result );
+        }
+
+        wp_send_json_success( $result );
+    }
+
+    /**
+     * Start restore process.
+     */
+    public function start_restore() {
+        $this->verify();
+
+        $backup_id       = sanitize_file_name( $_POST['backup_id'] ?? '' );
+        $restore_db      = ! empty( $_POST['restore_db'] );
+        $restore_files   = ! empty( $_POST['restore_files'] );
+        $create_snapshot = ! empty( $_POST['create_snapshot'] );
+
+        if ( empty( $backup_id ) ) {
+            wp_send_json_error( [ 'message' => 'Keine Backup-ID angegeben.' ] );
+        }
+
+        if ( ! $restore_db && ! $restore_files ) {
+            wp_send_json_error( [ 'message' => 'Bitte wähle mindestens DB oder Dateien zur Wiederherstellung.' ] );
+        }
+
+        $engine = new WPRB_Restore_Engine();
+        $result = $engine->start( $backup_id, $restore_db, $restore_files, $create_snapshot );
+
+        if ( isset( $result['error'] ) && $result['error'] ) {
+            wp_send_json_error( $result );
+        }
+
+        wp_send_json_success( $result );
+    }
+
+    /**
+     * Process next restore step.
+     */
+    public function process_restore() {
+        $this->verify();
+
+        @set_time_limit( 120 );
+        @ini_set( 'memory_limit', '512M' );
+
+        $engine = new WPRB_Restore_Engine();
+        $result = $engine->process_next();
+
+        if ( isset( $result['error'] ) && $result['error'] === true ) {
+            wp_send_json_error( $result );
+        }
+
+        wp_send_json_success( $result );
+    }
+
+    /**
+     * Cancel running restore.
+     */
+    public function cancel_restore() {
+        $this->verify();
+
+        $engine = new WPRB_Restore_Engine();
+        wp_send_json_success( $engine->cancel() );
+    }
+
+    /**
+     * Get restore status.
+     */
+    public function get_restore_status() {
+        $this->verify();
+
+        $engine = new WPRB_Restore_Engine();
+        wp_send_json_success( $engine->get_status() );
     }
 }

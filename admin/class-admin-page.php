@@ -92,6 +92,10 @@ class WPRB_Admin_Page {
                    class="nav-tab <?php echo $tab === 'backups' ? 'nav-tab-active' : ''; ?>">
                     <span class="dashicons dashicons-archive"></span> Backups
                 </a>
+                <a href="?page=wp-robust-backup&tab=restore"
+                   class="nav-tab <?php echo $tab === 'restore' ? 'nav-tab-active' : ''; ?>">
+                    <span class="dashicons dashicons-undo"></span> Wiederherstellen
+                </a>
                 <a href="?page=wp-robust-backup&tab=settings"
                    class="nav-tab <?php echo $tab === 'settings' ? 'nav-tab-active' : ''; ?>">
                     <span class="dashicons dashicons-admin-settings"></span> Einstellungen
@@ -110,6 +114,9 @@ class WPRB_Admin_Page {
                         break;
                     case 'backups':
                         $this->render_backups();
+                        break;
+                    case 'restore':
+                        $this->render_restore();
                         break;
                     case 'settings':
                         $this->render_settings();
@@ -288,6 +295,146 @@ class WPRB_Admin_Page {
                         <?php endforeach; ?>
                     </tbody>
                 </table>
+            <?php endif; ?>
+        </div>
+        <?php
+    }
+
+    // ─────────────────────────────────────────────
+    // Restore Tab
+    // ─────────────────────────────────────────────
+
+    private function render_restore() {
+        $storage = new WPRB_Storage_Manager();
+        $backups = $storage->list_backups();
+        ?>
+
+        <div class="wprb-card wprb-card-primary">
+            <h2>Backup wiederherstellen</h2>
+            <p>Wähle ein Backup aus und entscheide, was wiederhergestellt werden soll. Vor der Wiederherstellung wird automatisch eine Sicherheitskopie der aktuellen Datenbank erstellt.</p>
+
+            <div class="wprb-restore-warning">
+                <span class="dashicons dashicons-warning"></span>
+                <strong>Achtung:</strong> Die Wiederherstellung überschreibt die aktuelle Datenbank und/oder Dateien. Stelle sicher, dass du das richtige Backup ausgewählt hast.
+            </div>
+
+            <?php if ( empty( $backups ) ) : ?>
+                <p class="wprb-muted">Keine Backups vorhanden. Erstelle zuerst ein Backup im Dashboard.</p>
+            <?php else : ?>
+
+                <!-- Step 1: Select Backup -->
+                <div id="wprb-restore-step1">
+                    <h3>1. Backup auswählen</h3>
+                    <select id="wprb-restore-select" class="wprb-select-large">
+                        <option value="">— Backup wählen —</option>
+                        <?php foreach ( $backups as $backup ) : ?>
+                            <option value="<?php echo esc_attr( $backup['id'] ); ?>">
+                                <?php echo esc_html( $backup['date'] . ' – ' . $backup['size'] . ' (' . $backup['type'] . ')' ); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+
+                    <button class="button button-secondary" id="wprb-analyze-btn" disabled>
+                        <span class="dashicons dashicons-search"></span> Backup analysieren
+                    </button>
+                </div>
+
+                <!-- Step 2: Analysis Result & Options (hidden) -->
+                <div id="wprb-restore-step2" style="display: none;">
+                    <h3>2. Backup-Details</h3>
+
+                    <table class="wprb-restore-info-table">
+                        <tr>
+                            <th>Datum:</th>
+                            <td id="wprb-ri-date"></td>
+                        </tr>
+                        <tr>
+                            <th>Typ:</th>
+                            <td id="wprb-ri-type"></td>
+                        </tr>
+                        <tr>
+                            <th>WordPress:</th>
+                            <td id="wprb-ri-wp"></td>
+                        </tr>
+                        <tr>
+                            <th>Seite:</th>
+                            <td id="wprb-ri-url"></td>
+                        </tr>
+                        <tr>
+                            <th>Datenbank:</th>
+                            <td id="wprb-ri-db"></td>
+                        </tr>
+                        <tr>
+                            <th>Dateien:</th>
+                            <td id="wprb-ri-files"></td>
+                        </tr>
+                    </table>
+
+                    <h3>3. Was wiederherstellen?</h3>
+
+                    <div class="wprb-restore-options">
+                        <label class="wprb-checkbox-card" id="wprb-opt-db-card">
+                            <input type="checkbox" id="wprb-restore-db" checked>
+                            <span class="dashicons dashicons-database"></span>
+                            <span>Datenbank</span>
+                        </label>
+                        <label class="wprb-checkbox-card" id="wprb-opt-files-card">
+                            <input type="checkbox" id="wprb-restore-files" checked>
+                            <span class="dashicons dashicons-media-archive"></span>
+                            <span>Dateien</span>
+                        </label>
+                        <label class="wprb-checkbox-card">
+                            <input type="checkbox" id="wprb-restore-snapshot" checked>
+                            <span class="dashicons dashicons-shield"></span>
+                            <span>Sicherheitskopie vorher erstellen</span>
+                        </label>
+                    </div>
+
+                    <div style="margin-top: 20px;">
+                        <button class="button button-primary button-hero" id="wprb-start-restore-btn">
+                            <span class="dashicons dashicons-undo"></span>
+                            Wiederherstellung starten
+                        </button>
+                        <button class="button" id="wprb-restore-back-btn" style="margin-left: 8px;">
+                            Zurück
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Step 3: Progress (hidden) -->
+                <div id="wprb-restore-progress" style="display: none;">
+                    <h3>Wiederherstellung läuft...</h3>
+
+                    <div class="wprb-progress-bar-wrapper">
+                        <div class="wprb-progress-bar">
+                            <div class="wprb-progress-fill wprb-progress-fill-restore" id="wprb-restore-fill" style="width: 0%;">
+                                <span id="wprb-restore-percent">0%</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="wprb-progress-info">
+                        <span id="wprb-restore-message">Wird vorbereitet...</span>
+                        <span id="wprb-restore-time" class="wprb-muted"></span>
+                    </div>
+                    <button class="button wprb-cancel-backup" id="wprb-cancel-restore-btn">
+                        <span class="dashicons dashicons-no"></span> Abbrechen
+                    </button>
+                </div>
+
+                <!-- Step 4: Done (hidden) -->
+                <div id="wprb-restore-done" style="display: none;">
+                    <div class="wprb-notice wprb-notice-success" id="wprb-restore-done-notice">
+                        <span class="dashicons dashicons-yes-alt"></span>
+                        <div>
+                            <strong id="wprb-restore-done-title">Wiederherstellung abgeschlossen!</strong>
+                            <p id="wprb-restore-done-details" class="wprb-muted" style="margin: 4px 0 0;"></p>
+                        </div>
+                    </div>
+                    <button class="button" id="wprb-restore-reset-btn" style="margin-top: 8px;">
+                        Weitere Wiederherstellung
+                    </button>
+                </div>
+
             <?php endif; ?>
         </div>
         <?php

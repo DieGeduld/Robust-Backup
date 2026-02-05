@@ -26,6 +26,7 @@ require_once WPRB_PLUGIN_DIR . 'includes/class-db-exporter.php';
 require_once WPRB_PLUGIN_DIR . 'includes/class-file-archiver.php';
 require_once WPRB_PLUGIN_DIR . 'includes/class-storage-manager.php';
 require_once WPRB_PLUGIN_DIR . 'includes/class-backup-engine.php';
+require_once WPRB_PLUGIN_DIR . 'includes/class-restore-engine.php';
 require_once WPRB_PLUGIN_DIR . 'includes/class-ajax-handler.php';
 require_once WPRB_PLUGIN_DIR . 'includes/class-backup-scheduler.php';
 require_once WPRB_PLUGIN_DIR . 'admin/class-admin-page.php';

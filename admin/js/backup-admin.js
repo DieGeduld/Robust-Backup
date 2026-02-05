@@ -253,6 +253,218 @@
     }
 
     // ─────────────────────────────────────────────
+    // Restore
+    // ─────────────────────────────────────────────
+
+    let restoreRunning = false;
+    let restoreStartTime = null;
+    let restorePollTimer = null;
+    let currentAnalysis = null;
+
+    function analyzeBackup(backupId) {
+        const $btn = $('#wprb-analyze-btn');
+        $btn.prop('disabled', true).text('Analysiere...');
+
+        ajax('wprb_analyze_backup', { backup_id: backupId })
+            .done(function (response) {
+                if (response.success) {
+                    currentAnalysis = response.data;
+                    showAnalysisResult(response.data);
+                } else {
+                    alert(response.data ? response.data.message : data.strings.error);
+                }
+            })
+            .fail(function () {
+                alert(data.strings.error);
+            })
+            .always(function () {
+                $btn.prop('disabled', false).html('<span class="dashicons dashicons-search"></span> Backup analysieren');
+            });
+    }
+
+    function showAnalysisResult(info) {
+        const typeLabels = { full: 'Vollständig', db_only: 'Nur Datenbank', files_only: 'Nur Dateien' };
+
+        $('#wprb-ri-date').text(info.date);
+        $('#wprb-ri-type').text(typeLabels[info.type] || info.type);
+        $('#wprb-ri-wp').text(info.wp_version);
+        $('#wprb-ri-url').text(info.site_url);
+        $('#wprb-ri-db').text(info.has_db ? '✅ Vorhanden (' + info.db_size + ')' : '❌ Nicht vorhanden');
+        $('#wprb-ri-files').text(info.has_files ? '✅ ' + info.archives.length + ' Archiv(e) (' + info.archive_size + ')' : '❌ Nicht vorhanden');
+
+        // Enable/disable checkboxes based on what's available
+        const $dbCheck = $('#wprb-restore-db');
+        const $filesCheck = $('#wprb-restore-files');
+
+        $dbCheck.prop('disabled', !info.has_db).prop('checked', info.has_db);
+        $filesCheck.prop('disabled', !info.has_files).prop('checked', info.has_files);
+
+        $('#wprb-opt-db-card').toggleClass('wprb-checkbox-disabled', !info.has_db);
+        $('#wprb-opt-files-card').toggleClass('wprb-checkbox-disabled', !info.has_files);
+
+        $('#wprb-restore-step1').slideUp(200, function () {
+            $('#wprb-restore-step2').slideDown(200);
+        });
+    }
+
+    function startRestore() {
+        if (restoreRunning) return;
+
+        const backupId       = $('#wprb-restore-select').val();
+        const restoreDb      = $('#wprb-restore-db').is(':checked');
+        const restoreFiles   = $('#wprb-restore-files').is(':checked');
+        const createSnapshot = $('#wprb-restore-snapshot').is(':checked');
+
+        if (!restoreDb && !restoreFiles) {
+            alert('Bitte wähle mindestens Datenbank oder Dateien.');
+            return;
+        }
+
+        if (!confirm('Wiederherstellung wirklich starten? Die aktuellen Daten werden überschrieben!')) {
+            return;
+        }
+
+        restoreRunning = true;
+        restoreStartTime = Date.now();
+
+        // Show progress
+        $('#wprb-restore-step2').slideUp(200, function () {
+            $('#wprb-restore-progress').slideDown(200);
+        });
+
+        ajax('wprb_start_restore', {
+            backup_id: backupId,
+            restore_db: restoreDb ? 1 : 0,
+            restore_files: restoreFiles ? 1 : 0,
+            create_snapshot: createSnapshot ? 1 : 0,
+        })
+            .done(function (response) {
+                if (response.success) {
+                    processRestoreNext();
+                } else {
+                    restoreError(response.data ? response.data.message : data.strings.error);
+                }
+            })
+            .fail(function () {
+                restoreError(data.strings.error);
+            });
+    }
+
+    function processRestoreNext() {
+        if (!restoreRunning) return;
+
+        ajax('wprb_process_restore')
+            .done(function (response) {
+                if (!response.success) {
+                    restoreError(response.data ? response.data.message : data.strings.error);
+                    return;
+                }
+
+                const state = response.data;
+                updateRestoreProgress(state.progress || 0, state.message || '');
+
+                if (state.phase === 'done') {
+                    restoreComplete(state);
+                } else {
+                    restorePollTimer = setTimeout(processRestoreNext, 300);
+                }
+            })
+            .fail(function (xhr) {
+                if (xhr.status === 0 || xhr.status >= 500) {
+                    restorePollTimer = setTimeout(processRestoreNext, 2000);
+                } else {
+                    restoreError(data.strings.error);
+                }
+            });
+    }
+
+    function updateRestoreProgress(percent, message) {
+        percent = Math.min(100, Math.max(0, percent));
+        $('#wprb-restore-fill').css('width', percent + '%');
+        $('#wprb-restore-percent').text(Math.round(percent) + '%');
+        $('#wprb-restore-message').text(message);
+
+        if (restoreStartTime) {
+            const elapsed = Math.floor((Date.now() - restoreStartTime) / 1000);
+            $('#wprb-restore-time').text('Laufzeit: ' + formatTime(elapsed));
+        }
+    }
+
+    function restoreComplete(state) {
+        restoreRunning = false;
+        restoreStartTime = null;
+
+        $('#wprb-restore-progress').slideUp(200, function () {
+            const hasErrors = state.errors && state.errors.length > 0;
+            const $notice = $('#wprb-restore-done-notice');
+
+            if (hasErrors) {
+                $notice.removeClass('wprb-notice-success').addClass('wprb-notice-error');
+                $notice.find('.dashicons').removeClass('dashicons-yes-alt').addClass('dashicons-warning');
+                $('#wprb-restore-done-title').text('Wiederherstellung mit Fehlern abgeschlossen');
+                $('#wprb-restore-done-details').text(state.errors.length + ' Fehler: ' + state.errors.slice(0, 3).join(', '));
+            } else {
+                $notice.removeClass('wprb-notice-error').addClass('wprb-notice-success');
+                $notice.find('.dashicons').removeClass('dashicons-warning').addClass('dashicons-yes-alt');
+                $('#wprb-restore-done-title').text('Wiederherstellung erfolgreich abgeschlossen!');
+
+                let details = '';
+                if (state.snapshot_id) {
+                    details = 'Sicherheitskopie: ' + state.snapshot_id;
+                }
+                $('#wprb-restore-done-details').text(details);
+            }
+
+            $('#wprb-restore-done').slideDown(200);
+        });
+    }
+
+    function restoreError(message) {
+        restoreRunning = false;
+        restoreStartTime = null;
+
+        if (restorePollTimer) {
+            clearTimeout(restorePollTimer);
+            restorePollTimer = null;
+        }
+
+        $('#wprb-restore-progress').slideUp(200, function () {
+            const $notice = $('#wprb-restore-done-notice');
+            $notice.removeClass('wprb-notice-success').addClass('wprb-notice-error');
+            $notice.find('.dashicons').removeClass('dashicons-yes-alt').addClass('dashicons-warning');
+            $('#wprb-restore-done-title').text('Fehler bei der Wiederherstellung');
+            $('#wprb-restore-done-details').text(message);
+            $('#wprb-restore-done').slideDown(200);
+        });
+    }
+
+    function cancelRestore() {
+        if (!confirm('Wiederherstellung wirklich abbrechen? Der aktuelle Zustand könnte inkonsistent sein!')) return;
+
+        if (restorePollTimer) {
+            clearTimeout(restorePollTimer);
+            restorePollTimer = null;
+        }
+
+        ajax('wprb_cancel_restore').always(function () {
+            restoreRunning = false;
+            restoreStartTime = null;
+            $('#wprb-restore-progress').slideUp(200);
+            $('#wprb-restore-step1').slideDown(200);
+        });
+    }
+
+    function resetRestore() {
+        currentAnalysis = null;
+        $('#wprb-restore-done').hide();
+        $('#wprb-restore-step2').hide();
+        $('#wprb-restore-progress').hide();
+        $('#wprb-restore-select').val('');
+        $('#wprb-analyze-btn').prop('disabled', true);
+        $('#wprb-restore-step1').slideDown(200);
+    }
+
+    // ─────────────────────────────────────────────
     // Event Bindings
     // ─────────────────────────────────────────────
 
@@ -280,6 +492,44 @@
         $(document).on('submit', '#wprb-settings-form', function (e) {
             e.preventDefault();
             saveSettings(this);
+        });
+
+        // Restore: select change
+        $(document).on('change', '#wprb-restore-select', function () {
+            $('#wprb-analyze-btn').prop('disabled', !$(this).val());
+        });
+
+        // Restore: analyze
+        $(document).on('click', '#wprb-analyze-btn', function (e) {
+            e.preventDefault();
+            const id = $('#wprb-restore-select').val();
+            if (id) analyzeBackup(id);
+        });
+
+        // Restore: start
+        $(document).on('click', '#wprb-start-restore-btn', function (e) {
+            e.preventDefault();
+            startRestore();
+        });
+
+        // Restore: cancel
+        $(document).on('click', '#wprb-cancel-restore-btn', function (e) {
+            e.preventDefault();
+            cancelRestore();
+        });
+
+        // Restore: back
+        $(document).on('click', '#wprb-restore-back-btn', function (e) {
+            e.preventDefault();
+            $('#wprb-restore-step2').slideUp(200, function () {
+                $('#wprb-restore-step1').slideDown(200);
+            });
+        });
+
+        // Restore: reset
+        $(document).on('click', '#wprb-restore-reset-btn', function (e) {
+            e.preventDefault();
+            resetRestore();
         });
 
         // Check if a backup is already running on page load

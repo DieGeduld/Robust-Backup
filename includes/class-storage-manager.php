@@ -535,7 +535,7 @@ class WPRB_Storage_Manager {
             return '';
         }
 
-        return add_query_arg( [
+        $params = [
             'client_id'     => $client_id,
             'redirect_uri'  => self::get_oauth_redirect_url(),
             'response_type' => 'code',
@@ -543,7 +543,9 @@ class WPRB_Storage_Manager {
             'access_type'   => 'offline',
             'prompt'        => 'consent',
             'state'         => 'gdrive',
-        ], 'https://accounts.google.com/o/oauth2/v2/auth' );
+        ];
+
+        return 'https://accounts.google.com/o/oauth2/v2/auth?' . http_build_query( $params, '', '&' );
     }
 
     /**
@@ -555,13 +557,15 @@ class WPRB_Storage_Manager {
             return '';
         }
 
-        return add_query_arg( [
-            'client_id'     => $app_key,
-            'redirect_uri'  => self::get_oauth_redirect_url(),
-            'response_type' => 'code',
+        $params = [
+            'client_id'         => $app_key,
+            'redirect_uri'      => self::get_oauth_redirect_url(),
+            'response_type'     => 'code',
             'token_access_type' => 'offline',
-            'state'         => 'dropbox',
-        ], 'https://www.dropbox.com/oauth2/authorize' );
+            'state'             => 'dropbox',
+        ];
+
+        return 'https://www.dropbox.com/oauth2/authorize?' . http_build_query( $params, '', '&' );
     }
 
     /**

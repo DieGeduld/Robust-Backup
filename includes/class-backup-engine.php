@@ -111,12 +111,8 @@ class WPRB_Backup_Engine {
                     break;
                 }
 
-                // Weight: DB export = 0-40% of total, files = 40-90%, upload = 90-100%
-                if ( $type === 'db_only' ) {
-                    $state['progress'] = $result['progress'] * 0.9;
-                } else {
-                    $state['progress'] = $result['progress'] * 0.4;
-                }
+                // Progress 0-100% for this phase
+                $state['progress'] = $result['progress'];
                 $state['message'] = $result['message'];
 
                 if ( $result['done'] ) {
@@ -128,9 +124,11 @@ class WPRB_Backup_Engine {
                     if ( $type === 'full' ) {
                         $this->file_archiver->init_archive( $backup_id );
                         $state['phase'] = self::PHASE_FILES;
+                        $state['progress'] = 0; // Reset for next phase
                         $state['message'] = 'Datenbank fertig. Starte Datei-Archivierung...';
                     } else {
                         $state['phase'] = self::PHASE_UPLOAD;
+                        $state['progress'] = 0; // Reset for next phase
                         $state['message'] = 'Datenbank fertig. Starte Upload...';
                     }
 
@@ -147,11 +145,8 @@ class WPRB_Backup_Engine {
                     break;
                 }
 
-                if ( $type === 'files_only' ) {
-                    $state['progress'] = $result['progress'] * 0.9;
-                } else {
-                    $state['progress'] = 40 + ( $result['progress'] * 0.5 );
-                }
+                // Progress 0-100% for this phase
+                $state['progress'] = $result['progress'];
                 $state['message'] = $result['message'];
 
                 if ( $result['done'] ) {
@@ -160,6 +155,7 @@ class WPRB_Backup_Engine {
                     }
 
                     $state['phase']   = self::PHASE_COMPRESS;
+                    $state['progress'] = 0; 
                     $state['message'] = 'Dateien fertig. Komprimiere Archive...';
 
                     $this->log( 'Datei-Archivierung abgeschlossen für ' . $backup_id );
@@ -183,11 +179,19 @@ class WPRB_Backup_Engine {
 
                 $state['all_files'] = $all_files;
                 $state['phase']     = self::PHASE_UPLOAD;
-                $state['progress']  = 90;
+                $state['progress']  = 0;
                 $state['message']   = 'Komprimierung fertig. Starte Upload...';
                 break;
 
             case self::PHASE_UPLOAD:
+                // ... (Metadata logic remains same) ...
+                if ( ! file_exists( WPRB_BACKUP_DIR . $backup_id . '/backup-meta.json' ) ) {
+                     // ... (omitted for brevity in replacement, but kept in logic) ...
+                     // Actually I need to include it or it will be cut. Let's keep existing meta logic block below intact by targeting surrounding lines or re-adding it.
+                     // Since I'm replacing the whole block, I need to include the meta generation or ensure the start/end lines don't cover it if I don't want to change it.
+                     // The requirement is to change progress calculation.
+                }
+
                 // Create metadata if not exists
                 if ( ! file_exists( WPRB_BACKUP_DIR . $backup_id . '/backup-meta.json' ) ) {
                     $files_with_info = [];
@@ -217,16 +221,13 @@ class WPRB_Backup_Engine {
                     );
                 }
 
-                // Distribute to configured storage (passing state by reference/value back)
-                // We pass the entire state mostly to let storage manager know about current file index/offset
                 $dist_result = $this->storage->process_upload_step( $backup_id, $state['all_files'], $state['upload_state'] ?? [] );
                 
-                // Update upload state
                 $state['upload_state'] = $dist_result['state'];
                 
                 if ( isset( $dist_result['progress'] ) ) {
-                    // Map 90-99% for upload phase
-                    $state['progress'] = 90 + ( $dist_result['progress'] * 0.09 );
+                    // Progress 0-100% for upload phase
+                    $state['progress'] = $dist_result['progress'];
                 }
                 
                 $state['message'] = $dist_result['message'];

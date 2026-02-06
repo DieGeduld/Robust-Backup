@@ -123,17 +123,28 @@ class WPRB_Storage_Manager {
 
     private function calculate_upload_progress( $state, $total_storages, $total_files ) {
         if ( $total_storages === 0 ) return 100;
-        $storage_progress = $state['current_storage_index'] / $total_storages;
+        
+        // Basic calculation: (Finished Storage steps + partial current step) / Total Storage Steps
+        $storage_progress = $state['current_storage_index'];
         
         // Add file progress within current storage
         $file_progress = 0;
         if ( $total_files > 0 ) {
-            $base_file = $state['current_file_index'] / $total_files;
-            // Maybe add chunk progress?
-            $file_progress = $base_file * ( 1 / $total_storages );
+            $base_file = $state['current_file_index'];
+            
+            // Add chunk progress if available (only for Dropbox currently)
+            $chunk_progress = 0;
+            if ( isset( $state['dropbox_session']['offset'] ) && isset( $state['all_files'][ $state['current_file_index'] ] ) ) {
+                 // We don't have file size easily here without lookup, let's estimate
+                 // Or we could pass it. For now, just rely on file index.
+            }
+            
+            $file_progress = $base_file / $total_files;
         }
 
-        return round( ( $storage_progress + $file_progress ) * 100 );
+        $total_raw = ( $storage_progress + $file_progress ) / $total_storages;
+        
+        return round( $total_raw * 100 );
     }
 
     /**

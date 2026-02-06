@@ -74,7 +74,7 @@
         $('.wprb-start-backup').prop('disabled', true);
         $('#wprb-done-section').hide();
         $('#wprb-progress-section').slideDown(200);
-        updateProgress(0, data.strings.backupStarted);
+        updateProgress({ progress: 0, phase: 'init', message: data.strings.backupStarted });
 
         ajax('wprb_start_backup', { type: type })
             .done(function (response) {
@@ -101,7 +101,7 @@
 
                 const state = response.data;
 
-                updateProgress(state.progress || 0, state.message || '');
+                updateProgress(state);
 
                 if (state.phase === 'done') {
                     backupComplete(state);
@@ -120,12 +120,30 @@
             });
     }
 
-    function updateProgress(percent, message) {
-        percent = Math.min(100, Math.max(0, percent));
+    function getPhaseLabel(phase) {
+        const labels = {
+            'init': 'Initialisierung',
+            'database': 'Datenbank-Export',
+            'files': 'Dateien-Archivierung',
+            'compress': 'Komprimierung',
+            'upload': 'Upload zu Cloud',
+            'cleanup': 'Bereinigung',
+            'done': 'Abgeschlossen',
+            'idle': 'Wartet'
+        };
+        return labels[phase] || phase;
+    }
+
+    function updateProgress(state) {
+        const percent = Math.min(100, Math.max(0, state.progress || 0));
+        const phaseLabel = getPhaseLabel(state.phase);
 
         $('#wprb-progress-fill').css('width', percent + '%');
         $('#wprb-progress-percent').text(Math.round(percent) + '%');
-        $('#wprb-progress-message').text(message);
+        
+        // Show phase clearly above message
+        const messageHtml = '<strong>' + phaseLabel + '</strong><br>' + (state.message || '');
+        $('#wprb-progress-message').html(messageHtml);
 
         // Update elapsed time
         if (startTime) {
@@ -139,7 +157,7 @@
         startTime = null;
 
         $('#wprb-progress-section').slideUp(200, function () {
-            updateProgress(0, '');
+            updateProgress({ progress: 100, phase: 'done', message: '' });
         });
 
         let message = data.strings.backupDone;
@@ -561,7 +579,7 @@
 
                 $('.wprb-start-backup').prop('disabled', true);
                 $('#wprb-progress-section').show();
-                updateProgress(response.data.progress, response.data.message);
+                updateProgress(response.data);
                 processNext();
             }
         });

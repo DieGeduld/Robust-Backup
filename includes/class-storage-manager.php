@@ -16,31 +16,124 @@ if ( ! defined( 'ABSPATH' ) ) {
 class WPRB_Storage_Manager {
 
     /**
-     * Upload backup files to configured storage destinations.
-     *
-     * @param string $backup_id   The backup identifier.
-     * @param array  $files       Array of absolute file paths.
-     * @return array Results per storage type.
+     * Process one step of the upload distribution.
+     * Prevents timeouts by uploading incrementally.
+     * 
+     * @param string $backup_id
+     * @param array $files
+     * @param array $state Current upload state
+     * @return array New state and result
      */
-    public function distribute( $backup_id, $files ) {
+    public function process_upload_step( $backup_id, $files, $state ) {
         $storages = (array) get_option( 'wprb_storage', [ 'local' ] );
-        $results  = [];
-
-        foreach ( $storages as $storage ) {
-            switch ( $storage ) {
-                case 'local':
-                    $results['local'] = $this->store_local( $backup_id, $files );
-                    break;
-                case 'gdrive':
-                    $results['gdrive'] = $this->store_gdrive( $backup_id, $files );
-                    break;
-                case 'dropbox':
-                    $results['dropbox'] = $this->store_dropbox( $backup_id, $files );
-                    break;
+        
+        // Initialize state if empty
+        if ( empty( $state ) ) {
+            $state = [
+                'current_storage_index' => 0,
+                'current_file_index'    => 0,
+                'storage_states'        => [], // To keep track of storage-specific states (e.g. dropbox session)
+                'results'               => [],
+                'start_time'            => time(),
+            ];
+            // Initialize results
+            foreach ( $storages as $s ) {
+                $state['results'][ $s ] = [ 'success' => true, 'message' => 'Start...' ];
             }
         }
 
-        return $results;
+        // Time limit safety (run for max 20 seconds)
+        $time_limit = 20;
+
+        while ( $state['current_storage_index'] < count( $storages ) ) {
+            
+            if ( time() - $state['start_time'] > $time_limit ) {
+                return [
+                    'done'     => false,
+                    'state'    => $state,
+                    'message'  => 'Upload läuft...',
+                    'progress' => $this->calculate_upload_progress( $state, count( $storages ), count( $files ) ),
+                ];
+            }
+
+            $current_storage = $storages[ $state['current_storage_index'] ];
+            $result = null;
+
+            switch ( $current_storage ) {
+                case 'local':
+                    // Local is fast, do it in one go (but check if already done)
+                    if ( empty( $state['storage_states']['local_done'] ) ) {
+                        $res = $this->store_local( $backup_id, $files );
+                        $state['results']['local'] = $res;
+                        $state['storage_states']['local_done'] = true;
+                    }
+                    $result = [ 'done' => true ]; 
+                    break;
+
+                case 'dropbox':
+                    // Dropbox handles chunking internally now
+                    $result = $this->store_dropbox_step( $backup_id, $files, $state );
+                    break;
+                
+                case 'gdrive':
+                    // GDrive (todo: make resumable too, for now keeping atomic per file)
+                    // We treat it as one atomic step per file for simple migration
+                     if ( empty( $state['storage_states']['gdrive_done'] ) ) {
+                        $res = $this->store_gdrive( $backup_id, $files );
+                        $state['results']['gdrive'] = $res;
+                        $state['storage_states']['gdrive_done'] = true;
+                    }
+                    $result = [ 'done' => true ];
+                    break;
+            }
+
+            if ( $result && $result['done'] ) {
+                // Storage finished
+                if ( isset( $result['result'] ) ) {
+                    $state['results'][ $current_storage ] = $result['result'];
+                }
+                $state['current_storage_index']++;
+                // Reset file index/state for next storage
+                $state['current_file_index'] = 0;
+                unset( $state['current_upload_session'] );
+            } else {
+                // Storage not done yet (e.g. uploading big file), save state
+                if ( isset( $result['state'] ) ) {
+                    // Update internal storage state
+                    // (Actually we modified $state by reference logic or merge)
+                    // For dropbox we modify $state directly in default pass
+                }
+                
+                return [
+                    'done'     => false,
+                    'state'    => $state,
+                    'message'  => $result['message'] ?? 'Upload...',
+                    'progress' => $this->calculate_upload_progress( $state, count( $storages ), count( $files ) ),
+                ];
+            }
+        }
+
+        return [
+            'done'    => true,
+            'state'   => $state,
+            'results' => $state['results'],
+            'message' => 'Upload abgeschlossen.',
+        ];
+    }
+
+    private function calculate_upload_progress( $state, $total_storages, $total_files ) {
+        if ( $total_storages === 0 ) return 100;
+        $storage_progress = $state['current_storage_index'] / $total_storages;
+        
+        // Add file progress within current storage
+        $file_progress = 0;
+        if ( $total_files > 0 ) {
+            $base_file = $state['current_file_index'] / $total_files;
+            // Maybe add chunk progress?
+            $file_progress = $base_file * ( 1 / $total_storages );
+        }
+
+        return round( ( $storage_progress + $file_progress ) * 100 );
     }
 
     /**
@@ -63,6 +156,194 @@ class WPRB_Storage_Manager {
             ),
             'path'    => WPRB_BACKUP_DIR . $backup_id . '/',
         ];
+    }
+
+    // ... (Keep existing GDrive/Local methods) ...
+
+    /**
+     * Resumable Dropbox Storage Step
+     */
+    private function store_dropbox_step( $backup_id, $files, &$state ) {
+        $token = get_option( 'wprb_dropbox_token', '' );
+        if ( empty( $token ) ) {
+            return [ 'done' => true, 'result' => [ 'success' => false, 'message' => 'Dropbox nicht konfiguriert.' ] ];
+        }
+
+        // Setup token state if not present
+        if ( ! isset( $state['dropbox_token_refreshed'] ) ) {
+             $token_data   = json_decode( $token, true );
+             $access_token = $this->dropbox_refresh_token( $token_data );
+             if ( ! $access_token ) {
+                 return [ 'done' => true, 'result' => [ 'success' => false, 'message' => 'Token konnte nicht erneuert werden.' ] ];
+             }
+             $state['dropbox_access_token'] = $access_token;
+             $state['dropbox_token_refreshed'] = true;
+             $this->storage_log( 'Dropbox: Access Token erhalten.' );
+        }
+
+        $access_token = $state['dropbox_access_token'];
+        $folder_name  = $this->get_storage_folder_name();
+        
+        // Initialize error list if not present
+        if ( ! isset( $state['dropbox_errors'] ) ) {
+            $state['dropbox_errors'] = [];
+            $state['dropbox_uploaded_count'] = 0;
+        }
+
+        while ( $state['current_file_index'] < count( $files ) ) {
+            // Check global time limit via parent loop (we return control regularly)
+            if ( time() - $state['start_time'] > 15 ) {
+                return [ 'done' => false, 'message' => 'Dropbox Upload...' ];
+            }
+
+            $current_file = $files[ $state['current_file_index'] ];
+
+            if ( ! file_exists( $current_file ) ) {
+                $state['current_file_index']++;
+                continue;
+            }
+
+            $dest = '/' . $folder_name . '/' . $backup_id . '/' . basename( $current_file );
+
+            // Upload Chunk Step
+            $res = $this->dropbox_upload_file_chunked_step( $access_token, $current_file, $dest, $state );
+
+            if ( $res['done'] ) {
+                if ( $res['success'] ) {
+                    $state['dropbox_uploaded_count']++;
+                    $this->storage_log( 'Dropbox: Upload OK: ' . basename( $current_file ) );
+                } else {
+                    $state['dropbox_errors'][] = basename( $current_file ) . ' (' . $res['message'] . ')';
+                    $this->storage_log( 'Dropbox: Upload FEHLER: ' . basename( $current_file ) . ' - ' . $res['message'] );
+                }
+                
+                // Move to next file
+                $state['current_file_index']++;
+                unset( $state['dropbox_session'] ); // Clear session
+            } else {
+                return [ 'done' => false, 'message' => 'Dropbox: ' . basename( $current_file ) . ' (' . $res['progress'] . ')' ];
+            }
+        }
+
+        // All files done
+        return [
+            'done' => true,
+            'result' => [
+                'success' => empty( $state['dropbox_errors'] ),
+                'message' => sprintf(
+                    'Dropbox: %d/%d Dateien hochgeladen.%s',
+                    $state['dropbox_uploaded_count'],
+                    count( $files ),
+                    ! empty( $state['dropbox_errors'] ) ? ' Fehler bei: ' . implode( ', ', $state['dropbox_errors'] ) : ''
+                ),
+            ],
+        ];
+    }
+    
+    /**
+     * Upload a single chunk or start session.
+     */
+    private function dropbox_upload_file_chunked_step( $access_token, $filepath, $dest_path, &$state ) {
+        $file_size  = filesize( $filepath );
+        $chunk_size = 4 * 1024 * 1024; // Reduce to 4 MB per request to stay safe
+        
+        // Check if session exists in state
+        if ( ! isset( $state['dropbox_session'] ) ) {
+            $state['dropbox_session'] = [
+                'id' => null,
+                'offset' => 0,
+            ];
+            
+            // If file is small, just do simple upload in one go? 
+            // Better to standardize on chunked for reliability in this step-mode.
+            // But simple is safer for tiny files.
+            if ( $file_size < $chunk_size ) {
+                $res = $this->dropbox_simple_upload( $access_token, $filepath, $dest_path, $file_size );
+                return [ 'done' => true, 'success' => ( $res === true ), 'message' => ( $res === true ? 'OK' : $res ) ];
+            }
+        }
+        
+        $session = &$state['dropbox_session'];
+        
+        $fh = fopen( $filepath, 'rb' );
+        fseek( $fh, $session['offset'] );
+        $chunk = fread( $fh, $chunk_size );
+        fclose( $fh );
+        
+        $current_chunk_size = strlen( $chunk );
+        
+        // 1. Start Session
+        if ( $session['offset'] === 0 && $session['id'] === null ) {
+            $response = wp_remote_post( 'https://content.dropboxapi.com/2/files/upload_session/start', [
+                'timeout' => 45,
+                'headers' => [
+                    'Authorization'   => 'Bearer ' . $access_token,
+                    'Content-Type'    => 'application/octet-stream',
+                    'Dropbox-API-Arg' => wp_json_encode( [ 'close' => false ] ),
+                ],
+                'body' => $chunk,
+            ] );
+
+            if ( is_wp_error( $response ) ) return [ 'done' => true, 'success' => false, 'message' => $response->get_error_message() ];
+            
+            $body = json_decode( wp_remote_retrieve_body( $response ), true );
+            if ( ! isset( $body['session_id'] ) ) return [ 'done' => true, 'success' => false, 'message' => 'Start Failed' ];
+            
+            $session['id'] = $body['session_id'];
+            $session['offset'] += $current_chunk_size;
+            
+            return [ 'done' => false, 'progress' => size_format($session['offset']) . ' / ' . size_format($file_size) ];
+        }
+        
+        // 2. Append or Finish
+        $is_last_chunk = ( $session['offset'] + $current_chunk_size >= $file_size );
+        
+        if ( ! $is_last_chunk ) {
+            // Append
+             $response = wp_remote_post( 'https://content.dropboxapi.com/2/files/upload_session/append_v2', [
+                'timeout' => 45,
+                'headers' => [
+                    'Authorization'   => 'Bearer ' . $access_token,
+                    'Content-Type'    => 'application/octet-stream',
+                    'Dropbox-API-Arg' => wp_json_encode( [
+                        'cursor' => [ 'session_id' => $session['id'], 'offset' => $session['offset'] ],
+                        'close' => false,
+                    ] ),
+                ],
+                'body' => $chunk,
+            ] );
+            
+            if ( is_wp_error( $response ) ) return [ 'done' => true, 'success' => false, 'message' => 'Append Failed' ];
+            
+            if ( wp_remote_retrieve_response_code( $response ) !== 200 ) return [ 'done' => true, 'success' => false, 'message' => 'Append HTTP Error' ];
+            
+            $session['offset'] += $current_chunk_size;
+            return [ 'done' => false, 'progress' => size_format($session['offset']) . ' / ' . size_format($file_size) ];
+            
+        } else {
+            // Finish
+            $response = wp_remote_post( 'https://content.dropboxapi.com/2/files/upload_session/finish', [
+                'timeout' => 120,
+                'headers' => [
+                    'Authorization'   => 'Bearer ' . $access_token,
+                    'Content-Type'    => 'application/octet-stream',
+                    'Dropbox-API-Arg' => wp_json_encode( [
+                        'cursor' => [ 'session_id' => $session['id'], 'offset' => $session['offset'] ],
+                        'commit' => [ 'path' => $dest_path, 'mode' => 'overwrite', 'autorename' => false, 'mute' => true ],
+                    ] ),
+                ],
+                'body' => $chunk,
+            ] );
+            
+             if ( is_wp_error( $response ) ) return [ 'done' => true, 'success' => false, 'message' => 'Finish Failed: ' . $response->get_error_message() ];
+             if ( wp_remote_retrieve_response_code( $response ) !== 200 ) {
+                 // return [ 'done' => true, 'success' => false, 'message' => 'Finish HTTP Error: ' . wp_remote_retrieve_body($response) ];
+                 // Be verbose for debug
+                 return [ 'done' => true, 'success' => false, 'message' => 'Finish Error' ];
+             }
+             
+             return [ 'done' => true, 'success' => true ];
+        }
     }
 
     /**
@@ -96,7 +377,14 @@ class WPRB_Storage_Manager {
         $filepath = WPRB_BACKUP_DIR . $backup_id . '/' . $filename;
 
         if ( ! file_exists( $filepath ) ) {
-            wp_die( 'File not found' );
+            // Check if we can get a temporary link from Dropbox
+            $tmp_link = $this->get_dropbox_temp_link( $backup_id, $filename );
+            if ( $tmp_link ) {
+                wp_redirect( $tmp_link );
+                exit;
+            }
+
+            wp_die( 'File not found locally and could not be retrieved from cloud.' );
         }
 
         // Stream the file
@@ -124,6 +412,46 @@ class WPRB_Storage_Manager {
         fclose( $fh );
 
         exit;
+    }
+
+    private function get_dropbox_temp_link( $backup_id, $filename ) {
+        $token = get_option( 'wprb_dropbox_token', '' );
+        if ( empty( $token ) ) return false;
+        
+        $token_data = json_decode( $token, true );
+        $access_token = $this->dropbox_refresh_token( $token_data );
+        if ( ! $access_token ) return false;
+
+        $folder_name = $this->get_storage_folder_name();
+        $source_path = '/' . $folder_name . '/' . $backup_id . '/' . $filename;
+
+        $response = wp_remote_post( 'https://api.dropboxapi.com/2/files/get_temporary_link', [
+            'timeout' => 30,
+            'headers' => [
+                'Authorization' => 'Bearer ' . $access_token,
+                'Content-Type'  => 'application/json',
+            ],
+            'body' => wp_json_encode( [ 'path' => $source_path ] ),
+        ] );
+
+        if ( is_wp_error( $response ) || wp_remote_retrieve_response_code( $response ) !== 200 ) {
+             // Try legacy path
+             $source_path_legacy = '/WP-Backups/' . $backup_id . '/' . $filename;
+             $response = wp_remote_post( 'https://api.dropboxapi.com/2/files/get_temporary_link', [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $access_token,
+                    'Content-Type'  => 'application/json',
+                ],
+                'body' => wp_json_encode( [ 'path' => $source_path_legacy ] ),
+             ] );
+        }
+
+        if ( ! is_wp_error( $response ) && wp_remote_retrieve_response_code( $response ) === 200 ) {
+            $body = json_decode( wp_remote_retrieve_body( $response ), true );
+            return $body['link'] ?? false;
+        }
+
+        return false;
     }
 
     // ─────────────────────────────────────────────
@@ -876,15 +1204,23 @@ class WPRB_Storage_Manager {
             $file_info = [];
 
             // If local files are deleted, rely on metadata for file list
-            if ( $is_local_deleted && ! empty( $meta['files'] ) ) {
-                foreach ( $meta['files'] as $filename ) {
-                    // We don't know the exact size of each file if deleted, 
-                    // unless we stored it in meta. For now, we list them without size or handle gracefully.
-                    // TODO: Improve meta to store file sizes.
+            if ( $is_local_deleted && ! empty( $meta['file_details'] ) ) {
+                foreach ( $meta['file_details'] as $cur_file ) {
+                    $file_info[] = [
+                        'name' => $cur_file['name'],
+                        'size' => size_format( $cur_file['size'] ),
+                        'url'  => $this->get_download_url( $backup_id, $cur_file['name'] ),
+                        'missing' => true,
+                    ];
+                }
+                $size = $meta['total_size'] ?? 0;
+            } elseif ( $is_local_deleted && ! empty( $meta['files'] ) ) {
+                 // Fallback for old meta format
+                 foreach ( $meta['files'] as $filename ) {
                     $file_info[] = [
                         'name' => $filename,
-                        'size' => 'Cloud', // Indicator
-                        'url'  => '#', // No local download
+                        'size' => 'Cloud',
+                        'url'  => $this->get_download_url( $backup_id, $filename ),
                         'missing' => true,
                     ];
                 }
@@ -905,12 +1241,13 @@ class WPRB_Storage_Manager {
             $backups[] = [
                 'id'            => $backup_id,
                 'date'          => $meta['date'] ?? date( 'Y-m-d H:i:s', filemtime( $dir ) ),
-                'size'          => $is_local_deleted ? 'Cloud' : size_format( $size ),
+                'size'          => size_format( $size ),
                 'size_raw'      => $size,
                 'type'          => $meta['type'] ?? 'full',
                 'files'         => $file_info,
                 'file_count'    => count( $file_info ),
                 'local_deleted' => $is_local_deleted,
+                'location'      => $is_local_deleted ? 'Cloud' : 'Lokal',
             ];
         }
 

@@ -258,6 +258,7 @@ class WPRB_Admin_Page {
                             <th>Datum</th>
                             <th>Typ</th>
                             <th>Größe</th>
+                            <th>Ort</th>
                             <th>Dateien</th>
                             <th>Aktionen</th>
                         </tr>
@@ -278,6 +279,13 @@ class WPRB_Admin_Page {
                                     ?>
                                 </td>
                                 <td><?php echo esc_html( $backup['size'] ); ?></td>
+                                <td>
+                                    <?php if ( $backup['location'] === 'Cloud' ) : ?>
+                                        <span class="dashicons dashicons-cloud" title="Nur in der Cloud"></span> Cloud
+                                    <?php else : ?>
+                                        <span class="dashicons dashicons-desktop" title="Lokal vorhanden"></span> Lokal
+                                    <?php endif; ?>
+                                </td>
                                 <td>
                                     <?php foreach ( $backup['files'] as $file ) : ?>
                                         <a href="<?php echo esc_url( $file['url'] ); ?>" class="wprb-file-link" title="Download: <?php echo esc_attr( $file['name'] ); ?>">

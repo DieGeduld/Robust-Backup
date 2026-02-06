@@ -188,58 +188,86 @@ class WPRB_Backup_Engine {
                 break;
 
             case self::PHASE_UPLOAD:
-                // Save backup metadata
-                $meta = [
-                    'date'      => date( 'Y-m-d H:i:s' ),
-                    'type'      => $type,
-                    'wp_version' => get_bloginfo( 'version' ),
-                    'site_url'  => get_site_url(),
-                    'files'     => array_map( 'basename', $state['all_files'] ),
-                ];
-                file_put_contents(
-                    WPRB_BACKUP_DIR . $backup_id . '/backup-meta.json',
-                    wp_json_encode( $meta, JSON_PRETTY_PRINT )
-                );
-
-                // Distribute to configured storage
-                $results = $this->storage->distribute( $backup_id, $state['all_files'] );
-                $upload_errors = false;
-
-                foreach ( $results as $storage => $result ) {
-                    if ( ! $result['success'] ) {
-                        $state['errors'][] = $storage . ': ' . $result['message'];
-                        $upload_errors = true;
+                // Create metadata if not exists
+                if ( ! file_exists( WPRB_BACKUP_DIR . $backup_id . '/backup-meta.json' ) ) {
+                    $files_with_info = [];
+                    $total_size = 0;
+                    foreach ( $state['all_files'] as $f ) {
+                        $s = filesize( $f );
+                        $files_with_info[] = [
+                            'name' => basename( $f ),
+                            'size' => $s,
+                        ];
+                        $total_size += $s;
                     }
-                    $this->log( $storage . ': ' . $result['message'] );
+
+                    $meta = [
+                        'date'         => date( 'Y-m-d H:i:s' ),
+                        'type'         => $type,
+                        'wp_version'   => get_bloginfo( 'version' ),
+                        'site_url'     => get_site_url(),
+                        'files'        => array_column( $files_with_info, 'name' ),
+                        'file_details' => $files_with_info,
+                        'total_size'   => $total_size,
+                        'cloud_only'   => false,
+                    ];
+                    file_put_contents(
+                        WPRB_BACKUP_DIR . $backup_id . '/backup-meta.json',
+                        wp_json_encode( $meta, JSON_PRETTY_PRINT )
+                    );
                 }
 
-                // Clean up local files if not selected as storage (and no upload errors occurred)
-                $active_storage = (array) get_option( 'wprb_storage', [ 'local' ] );
-                if ( ! in_array( 'local', $active_storage ) && ! $upload_errors ) {
-                    // Only delete files if we have at least one successful remote storage
-                    $remote_success = false;
-                    foreach ( $results as $res ) {
-                        if ( $res['success'] ) {
-                            $remote_success = true;
-                            break;
+                // Distribute to configured storage (passing state by reference/value back)
+                // We pass the entire state mostly to let storage manager know about current file index/offset
+                $dist_result = $this->storage->process_upload_step( $backup_id, $state['all_files'], $state['upload_state'] ?? [] );
+                
+                // Update upload state
+                $state['upload_state'] = $dist_result['state'];
+                
+                if ( isset( $dist_result['progress'] ) ) {
+                    // Map 90-99% for upload phase
+                    $state['progress'] = 90 + ( $dist_result['progress'] * 0.09 );
+                }
+                
+                $state['message'] = $dist_result['message'];
+
+                if ( $dist_result['done'] ) {
+                    $results = $dist_result['results'];
+                    $upload_errors = false;
+
+                    foreach ( $results as $storage => $res ) {
+                        if ( ! $res['success'] ) {
+                            $state['errors'][] = $storage . ': ' . $res['message'];
+                            $upload_errors = true;
+                        }
+                        $this->log( $storage . ': ' . $res['message'] );
+                    }
+
+                    // cleanup
+                    $active_storage = (array) get_option( 'wprb_storage', [ 'local' ] );
+                    if ( ! in_array( 'local', $active_storage ) && ! $upload_errors ) {
+                        $remote_success = false;
+                        foreach ( $results as $res ) {
+                            if ( $res['success'] ) {
+                                $remote_success = true;
+                                break;
+                            }
+                        }
+
+                        if ( $remote_success ) {
+                            $this->storage->delete_local_files_only( $backup_id );
+                            $this->log( 'Lokale Dateien bereinigt (Nur Cloud-Speicher gewählt).' );
                         }
                     }
 
-                    if ( $remote_success ) {
-                        $this->storage->delete_local_files_only( $backup_id );
-                        $this->log( 'Lokale Dateien bereinigt (Nur Cloud-Speicher gewählt).' );
-                    }
+                    $this->storage->enforce_retention();
+
+                    $state['phase']           = self::PHASE_DONE;
+                    $state['progress']        = 100;
+                    $state['message']         = 'Backup abgeschlossen!';
+                    $state['storage_results'] = $results;
+                    $this->log( 'Backup abgeschlossen: ' . $backup_id );
                 }
-
-                // Enforce retention
-                $this->storage->enforce_retention();
-
-                $state['phase']    = self::PHASE_DONE;
-                $state['progress'] = 100;
-                $state['message']  = 'Backup abgeschlossen!';
-                $state['storage_results'] = $results;
-
-                $this->log( 'Backup abgeschlossen: ' . $backup_id );
                 break;
 
             case self::PHASE_DONE:

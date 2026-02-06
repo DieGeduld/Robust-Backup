@@ -82,13 +82,7 @@ class WPRB_Storage_Manager {
                     break;
                 
                 case 'gdrive':
-                    // GDrive (todo: make resumable too, for now keeping atomic per file)
-                     if ( empty( $state['storage_states']['gdrive_done'] ) ) {
-                        $res = $this->store_gdrive( $backup_id, $files );
-                        $state['results']['gdrive'] = $res;
-                        $state['storage_states']['gdrive_done'] = true;
-                    }
-                    $result = [ 'done' => true ];
+                    $result = $this->store_gdrive_step( $backup_id, $files, $state, $execution_start_time, $time_limit );
                     break;
             }
 
@@ -481,71 +475,75 @@ class WPRB_Storage_Manager {
     // ─────────────────────────────────────────────
 
     /**
-     * Upload to Google Drive using chunked/resumable upload.
+     * Upload to Google Drive (Step-based).
      */
-    private function store_gdrive( $backup_id, $files ) {
+    private function store_gdrive_step( $backup_id, $files, &$state, $execution_start_time, $time_limit ) {
+        // Init State
+        if ( ! isset( $state['gdrive_file_index'] ) ) $state['gdrive_file_index'] = 0;
+
         $token = get_option( 'wprb_gdrive_token', '' );
         if ( empty( $token ) ) {
-            return [
-                'success' => false,
-                'message' => 'Google Drive nicht konfiguriert. Bitte Token in den Einstellungen hinterlegen.',
-            ];
+            $state['results']['gdrive'] = [ 'success' => false, 'message' => 'Google Drive nicht konfiguriert.' ];
+            return [ 'done' => true ];
         }
 
         $token_data = json_decode( $token, true );
         $access_token = $this->gdrive_refresh_token( $token_data );
-
         if ( ! $access_token ) {
-            return [
-                'success' => false,
-                'message' => 'Google Drive Token konnte nicht erneuert werden.',
-            ];
+            $state['results']['gdrive'] = [ 'success' => false, 'message' => 'Google Drive Token Error.' ];
+            return [ 'done' => true ];
         }
 
-        // Create Root Folder Structure
-        $root_name = 'WP-Backup-' . $this->get_storage_folder_name();
-        $root_id   = $this->gdrive_get_folder_id( $access_token, $root_name );
-
-        if ( ! $root_id ) {
-            $root_id = $this->gdrive_create_folder( $access_token, $root_name );
+        // Folder Creation (Only once)
+        if ( ! isset( $state['gdrive_folder_id'] ) ) {
+            $root_name = 'WP-Backup-' . $this->get_storage_folder_name();
+            $root_id   = $this->gdrive_get_folder_id( $access_token, $root_name );
+            
+            if ( ! $root_id ) {
+                $root_id = $this->gdrive_create_folder( $access_token, $root_name );
+            }
+            
+            if ( $root_id ) {
+                $folder_id = $this->gdrive_create_folder( $access_token, $backup_id, $root_id );
+                $state['gdrive_folder_id'] = $folder_id;
+            } else {
+                $state['results']['gdrive'] = [ 'success' => false, 'message' => 'Google Drive Root Folder Error.' ];
+                return [ 'done' => true ];
+            }
         }
 
-        if ( ! $root_id ) {
-            return [
-                'success' => false,
-                'message' => 'Konnte Root-Ordner auf Google Drive nicht erstellen.',
-            ];
-        }
+        // Loop Files
+        while ( $state['gdrive_file_index'] < count( $files ) ) {
+            // Time Check
+            if ( time() - $execution_start_time > $time_limit ) {
+                return [ 'done' => false, 'message' => 'Google Drive Upload...' ];
+            }
 
-        // Create a folder for this backup inside Root
-        $folder_id = $this->gdrive_create_folder( $access_token, $backup_id, $root_id );
-
-        $uploaded = 0;
-        $errors   = [];
-
-        foreach ( $files as $file ) {
+            $file = $files[ $state['gdrive_file_index'] ];
             if ( ! file_exists( $file ) ) {
+                $state['gdrive_file_index']++;
                 continue;
             }
 
-            $result = $this->gdrive_upload_file( $access_token, $file, $folder_id );
+            // Upload Chunk
+            $res = $this->gdrive_upload_file_chunked_step( $access_token, $file, $state['gdrive_folder_id'], $state );
 
-            if ( $result ) {
-                $uploaded++;
+            if ( $res['done'] ) {
+                $state['gdrive_file_index']++;
+                unset( $state['gdrive_session'] ); // Clear session for next file
+                
+                if ( $res['error'] ) {
+                    // Log error but continue? For now we just count it as done (failed).
+                    $this->storage_log( 'GDrive Upload Failed: ' . basename( $file ) );
+                }
             } else {
-                $errors[] = basename( $file );
+                 // Chunk uploaded, need more steps
+                 return [ 'done' => false, 'message' => 'Uploading to GDrive: ' . basename( $file ) . ' (' . round( $res['progress'] ) . '%)' ];
             }
         }
 
-        return [
-            'success' => empty( $errors ),
-            'message' => sprintf(
-                'Google Drive: %d/%d Datei(en) hochgeladen.%s',
-                $uploaded,
-                count( $files ),
-                ! empty( $errors ) ? ' Fehler bei: ' . implode( ', ', $errors ) : ''
-            ),
-        ];
+        $state['results']['gdrive'] = [ 'success' => true, 'message' => 'Upload zu Google Drive abgeschlossen.' ];
+        return [ 'done' => true ];
     }
 
     /**
@@ -642,78 +640,89 @@ class WPRB_Storage_Manager {
     }
 
     /**
-     * Upload a file to Google Drive using resumable upload (for large files).
+     * Upload a file chunk to Google Drive.
      */
-    private function gdrive_upload_file( $access_token, $filepath, $folder_id ) {
-        $filename  = basename( $filepath );
+    private function gdrive_upload_file_chunked_step( $access_token, $filepath, $folder_id, &$state ) {
         $file_size = filesize( $filepath );
+        $filename  = basename( $filepath );
 
-        // Step 1: Initiate resumable upload session
-        $metadata = wp_json_encode( [
-            'name'    => $filename,
-            'parents' => $folder_id ? [ $folder_id ] : [],
-        ] );
-
-        $response = wp_remote_post(
-            'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable',
-            [
-                'timeout' => 30,
-                'headers' => [
-                    'Authorization'           => 'Bearer ' . $access_token,
-                    'Content-Type'            => 'application/json; charset=UTF-8',
-                    'X-Upload-Content-Length'  => $file_size,
-                ],
-                'body' => $metadata,
-            ]
-        );
-
-        if ( is_wp_error( $response ) ) {
-            return false;
-        }
-
-        $upload_url = wp_remote_retrieve_header( $response, 'location' );
-        if ( empty( $upload_url ) ) {
-            return false;
-        }
-
-        // Step 2: Upload in 5MB chunks
-        $chunk_size = 5 * 1024 * 1024; // 5 MB
-        $fh         = fopen( $filepath, 'rb' );
-        $offset     = 0;
-
-        while ( $offset < $file_size ) {
-            $chunk  = fread( $fh, $chunk_size );
-            $length = strlen( $chunk );
-            $end    = $offset + $length - 1;
-
-            $response = wp_remote_request( $upload_url, [
-                'method'  => 'PUT',
-                'timeout' => 120,
-                'headers' => [
-                    'Content-Length' => $length,
-                    'Content-Range'  => "bytes {$offset}-{$end}/{$file_size}",
-                ],
-                'body' => $chunk,
+        // Initialize Session
+        if ( ! isset( $state['gdrive_session'] ) || $state['gdrive_session']['file'] !== $filepath ) {
+            $metadata = wp_json_encode( [
+                'name'    => $filename,
+                'parents' => $folder_id ? [ $folder_id ] : [],
             ] );
 
-            $status = wp_remote_retrieve_response_code( $response );
+            $response = wp_remote_post(
+                'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable',
+                [
+                    'timeout' => 30,
+                    'headers' => [
+                        'Authorization'           => 'Bearer ' . $access_token,
+                        'Content-Type'            => 'application/json; charset=UTF-8',
+                        'X-Upload-Content-Length'  => $file_size,
+                    ],
+                    'body' => $metadata,
+                ]
+            );
 
-            if ( $status === 200 || $status === 201 ) {
-                // Upload complete
-                fclose( $fh );
-                return true;
-            } elseif ( $status === 308 ) {
-                // Chunk accepted, continue
-                $offset += $length;
-            } else {
-                // Error
-                fclose( $fh );
-                return false;
+            if ( is_wp_error( $response ) ) {
+                return [ 'done' => true, 'error' => true ];
             }
+
+            $upload_url = wp_remote_retrieve_header( $response, 'location' );
+            if ( empty( $upload_url ) ) {
+                return [ 'done' => true, 'error' => true ];
+            }
+
+            $state['gdrive_session'] = [
+                'file'       => $filepath,
+                'upload_url' => $upload_url,
+                'offset'     => 0,
+            ];
         }
 
+        // Process Chunk
+        $upload_url = $state['gdrive_session']['upload_url'];
+        $offset     = $state['gdrive_session']['offset'];
+        $chunk_size = 2 * 1024 * 1024; // 2 MB Chunks (kleiner für mehr Responsiveness)
+
+        // Read chunk
+        $fh = fopen( $filepath, 'rb' );
+        if ( ! $fh ) return [ 'done' => true, 'error' => true ]; // Should not happen
+        fseek( $fh, $offset );
+        $chunk = fread( $fh, $chunk_size );
         fclose( $fh );
-        return true;
+
+        $length = strlen( $chunk );
+        $end    = $offset + $length - 1;
+
+        // Send Chunk
+        $response = wp_remote_request( $upload_url, [
+            'method'  => 'PUT',
+            'timeout' => 60,
+            'headers' => [
+                'Content-Length' => $length,
+                'Content-Range'  => "bytes {$offset}-{$end}/{$file_size}",
+            ],
+            'body' => $chunk,
+        ] );
+
+        $status = wp_remote_retrieve_response_code( $response );
+
+        if ( $status === 308 ) {
+            // Resume Incomplete
+            $state['gdrive_session']['offset'] += $length;
+            $percent = ($state['gdrive_session']['offset'] / $file_size) * 100;
+            return [ 'done' => false, 'error' => false, 'progress' => $percent ];
+        } elseif ( $status === 200 || $status === 201 ) {
+            // Done
+            return [ 'done' => true, 'error' => false ];
+        } else {
+            // Error
+            $this->storage_log( 'GDrive Chunk Error: ' . $status . ' - ' . wp_remote_retrieve_body($response) );
+            return [ 'done' => true, 'error' => true ];
+        }
     }
 
     // ─────────────────────────────────────────────

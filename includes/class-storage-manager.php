@@ -53,14 +53,18 @@ class WPRB_Storage_Manager {
                 return [
                     'done'     => false,
                     'state'    => $state,
-                    'message'  => 'Upload läuft...', // Generic message, specific message comes from inner logic usually
-                    'progress' => $this->calculate_upload_progress( $state, count( $storages ), count( $files ) ),
+                    'message'  => 'Upload läuft...', 
+                    'progress' => $this->calculate_upload_progress( $state, count( $storages ), $files ),
                 ];
             }
 
             $current_storage = $storages[ $state['current_storage_index'] ];
             $result = null;
 
+            // ... switch/case code is fine ... 
+            // I need to be careful not to cut it.
+            // I will target the caller update first.
+            
             switch ( $current_storage ) {
                 case 'local':
                     // Local is fast, do it in one go (but check if already done)
@@ -98,18 +102,11 @@ class WPRB_Storage_Manager {
                 $state['current_file_index'] = 0;
                 unset( $state['current_upload_session'] );
             } else {
-                // Storage not done yet (e.g. uploading big file), save state
-                if ( isset( $result['state'] ) ) {
-                    // Update internal storage state
-                    // (Actually we modified $state by reference logic or merge)
-                    // For dropbox we modify $state directly in default pass
-                }
-                
                 return [
                     'done'     => false,
                     'state'    => $state,
                     'message'  => $result['message'] ?? 'Upload...',
-                    'progress' => $this->calculate_upload_progress( $state, count( $storages ), count( $files ) ),
+                    'progress' => $this->calculate_upload_progress( $state, count( $storages ), $files ),
                 ];
             }
         }
@@ -122,25 +119,35 @@ class WPRB_Storage_Manager {
         ];
     }
 
-    private function calculate_upload_progress( $state, $total_storages, $total_files ) {
+    private function calculate_upload_progress( $state, $total_storages, $files ) {
         if ( $total_storages === 0 ) return 100;
         
-        // Basic calculation: (Finished Storage steps + partial current step) / Total Storage Steps
-        $storage_progress = $state['current_storage_index'];
+        $total_files = count( $files );
         
-        // Add file progress within current storage
+        // 1. Storage Progress (which storage provider are we on?)
+        $storage_progress = $state['current_storage_index']; // e.g., 0 compeleted
+        
+        // 2. File Progress (within current storage)
         $file_progress = 0;
         if ( $total_files > 0 ) {
-            $base_file = $state['current_file_index'];
+            $base_file_idx = $state['current_file_index'];
             
-            // Add chunk progress if available (only for Dropbox currently)
-            $chunk_progress = 0;
-            if ( isset( $state['dropbox_session']['offset'] ) && isset( $state['all_files'][ $state['current_file_index'] ] ) ) {
-                 // We don't have file size easily here without lookup, let's estimate
-                 // Or we could pass it. For now, just rely on file index.
+            // 3. Chunk Progress (within current file)
+            $chunk_percent = 0;
+            
+            // If we have an active dropbox session with offset, calculate chunk %
+            // Only if current file index is valid
+            if ( isset( $state['dropbox_session']['offset'] ) && isset( $files[ $base_file_idx ] ) ) {
+                $current_file = $files[ $base_file_idx ];
+                if ( file_exists( $current_file ) ) {
+                    $fsize = filesize( $current_file );
+                    if ( $fsize > 0 ) {
+                        $chunk_percent = $state['dropbox_session']['offset'] / $fsize;
+                    }
+                }
             }
             
-            $file_progress = $base_file / $total_files;
+            $file_progress = ( $base_file_idx + $chunk_percent ) / $total_files;
         }
 
         $total_raw = ( $storage_progress + $file_progress ) / $total_storages;

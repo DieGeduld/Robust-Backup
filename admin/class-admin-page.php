@@ -102,6 +102,10 @@ class WPRB_Admin_Page {
                    class="nav-tab <?php echo $tab === 'settings' ? 'nav-tab-active' : ''; ?>">
                     <span class="dashicons dashicons-admin-settings"></span> Einstellungen
                 </a>
+                <a href="?page=wp-robust-backup&tab=storage"
+                   class="nav-tab <?php echo $tab === 'storage' ? 'nav-tab-active' : ''; ?>">
+                    <span class="dashicons dashicons-cloud"></span> Speicher
+                </a>
                 <a href="?page=wp-robust-backup&tab=log"
                    class="nav-tab <?php echo $tab === 'log' ? 'nav-tab-active' : ''; ?>">
                     <span class="dashicons dashicons-editor-alignleft"></span> Log
@@ -122,6 +126,9 @@ class WPRB_Admin_Page {
                         break;
                     case 'settings':
                         $this->render_settings();
+                        break;
+                    case 'storage':
+                        $this->render_storage();
                         break;
                     case 'log':
                         $this->render_log();
@@ -479,12 +486,12 @@ class WPRB_Admin_Page {
     // ─────────────────────────────────────────────
 
     private function render_settings() {
-        $storage_mgr = new WPRB_Storage_Manager();
         ?>
         <div class="wprb-card">
-            <h2>Einstellungen</h2>
+            <h2>Allgemeine Einstellungen</h2>
 
             <form id="wprb-settings-form">
+                <input type="hidden" name="tab" value="settings">
 
                 <!-- Schedule -->
                 <h3>Zeitplan</h3>
@@ -527,101 +534,6 @@ class WPRB_Admin_Page {
                             <input type="number" name="retention" min="1" max="100"
                                    value="<?php echo esc_attr( get_option( 'wprb_retention', 5 ) ); ?>">
                             <p class="description">Anzahl der Backups, die behalten werden. Ältere werden automatisch gelöscht.</p>
-                        </td>
-                    </tr>
-                </table>
-
-                <!-- Storage -->
-                <h3>Speicherorte</h3>
-                <table class="form-table">
-                    <tr>
-                        <th>Aktive Speicherorte</th>
-                        <td>
-                            <?php
-                            $active_storage = (array) get_option( 'wprb_storage', [ 'local' ] );
-                            $storage_opts   = [
-                                'local'   => 'Lokal auf dem Server',
-                                'gdrive'  => 'Google Drive',
-                                'dropbox' => 'Dropbox',
-                            ];
-                            foreach ( $storage_opts as $key => $label ) {
-                                printf(
-                                    '<label><input type="checkbox" name="storage[]" value="%s" %s> %s</label><br>',
-                                    esc_attr( $key ),
-                                    checked( in_array( $key, $active_storage ), true, false ),
-                                    esc_html( $label )
-                                );
-                            }
-                            ?>
-                            <p class="description">Download via Browser ist immer verfügbar.</p>
-                        </td>
-                    </tr>
-                </table>
-
-                <!-- Google Drive -->
-                <h3>Google Drive</h3>
-                <table class="form-table">
-                    <tr>
-                        <th>Client ID</th>
-                        <td><input type="text" name="gdrive_client_id" class="regular-text"
-                                   value="<?php echo esc_attr( get_option( 'wprb_gdrive_client_id', '' ) ); ?>"></td>
-                    </tr>
-                    <tr>
-                        <th>Client Secret</th>
-                        <td><input type="password" name="gdrive_secret" class="regular-text"
-                                   value="<?php echo esc_attr( get_option( 'wprb_gdrive_secret', '' ) ); ?>"></td>
-                    </tr>
-                    <tr>
-                        <th>Status</th>
-                        <td>
-                            <?php
-                            $gdrive_token = get_option( 'wprb_gdrive_token', '' );
-                            if ( ! empty( $gdrive_token ) ) {
-                                echo '<span class="wprb-status-ok">✅ Verbunden</span> ';
-                                echo '<a href="#" class="wprb-disconnect-storage button button-link-delete" data-service="gdrive" style="margin-left: 10px;">Trennen</a>';
-                            } else {
-                                $auth_url = $storage_mgr->get_gdrive_auth_url();
-                                if ( $auth_url ) {
-                                    echo '<a href="' . esc_url( $auth_url ) . '" class="button">Mit Google Drive verbinden</a>';
-                                } else {
-                                    echo '<span class="wprb-muted">Client ID eingeben und speichern, dann verbinden.</span>';
-                                }
-                            }
-                            ?>
-                        </td>
-                    </tr>
-                </table>
-
-                <!-- Dropbox -->
-                <h3>Dropbox</h3>
-                <table class="form-table">
-                    <tr>
-                        <th>App Key</th>
-                        <td><input type="text" name="dropbox_app_key" class="regular-text"
-                                   value="<?php echo esc_attr( get_option( 'wprb_dropbox_app_key', '' ) ); ?>"></td>
-                    </tr>
-                    <tr>
-                        <th>App Secret</th>
-                        <td><input type="password" name="dropbox_secret" class="regular-text"
-                                   value="<?php echo esc_attr( get_option( 'wprb_dropbox_secret', '' ) ); ?>"></td>
-                    </tr>
-                    <tr>
-                        <th>Status</th>
-                        <td>
-                            <?php
-                            $dropbox_token = get_option( 'wprb_dropbox_token', '' );
-                            if ( ! empty( $dropbox_token ) ) {
-                                echo '<span class="wprb-status-ok">✅ Verbunden</span> ';
-                                echo '<a href="#" class="wprb-disconnect-storage button button-link-delete" data-service="dropbox" style="margin-left: 10px;">Trennen</a>';
-                            } else {
-                                $auth_url = $storage_mgr->get_dropbox_auth_url();
-                                if ( $auth_url ) {
-                                    echo '<a href="' . esc_url( $auth_url ) . '" class="button">Mit Dropbox verbinden</a>';
-                                } else {
-                                    echo '<span class="wprb-muted">App Key eingeben und speichern, dann verbinden.</span>';
-                                }
-                            }
-                            ?>
                         </td>
                     </tr>
                 </table>
@@ -672,11 +584,143 @@ class WPRB_Admin_Page {
 
             </form>
         </div>
+        <?php
+    }
 
-        <div class="wprb-card" style="margin-top: 20px;">
-            <h3>OAuth Redirect URI</h3>
-            <p>Verwende folgende URL als Redirect URI in deiner Google Cloud Console bzw. Dropbox App:</p>
-            <code><?php echo esc_html( WPRB_Storage_Manager::get_oauth_redirect_url() ); ?></code>
+    // ─────────────────────────────────────────────
+    // Storage Tab
+    // ─────────────────────────────────────────────
+
+    private function render_storage() {
+        $storage_mgr = new WPRB_Storage_Manager();
+        $active_storage = (array) get_option( 'wprb_storage', [ 'local' ] );
+        ?>
+        <div class="wprb-card">
+            <h2>Speicherorte verwalten</h2>
+
+            <form id="wprb-storage-settings-form">
+                <input type="hidden" name="tab" value="storage">
+
+                <!-- Storage Selection -->
+                <table class="form-table">
+                    <tr>
+                        <th>Aktive Speicherorte</th>
+                        <td>
+                            <?php
+                            $storage_opts = [
+                                'local'   => 'Lokal auf dem Server',
+                                'dropbox' => 'Dropbox',
+                                'gdrive'  => 'Google Drive',
+                            ];
+                            foreach ( $storage_opts as $key => $label ) {
+                                printf(
+                                    '<label><input type="checkbox" name="storage[]" value="%s" %s class="wprb-storage-checkbox" data-target="#wprb-%s-settings"> %s</label><br>',
+                                    esc_attr( $key ),
+                                    checked( in_array( $key, $active_storage ), true, false ),
+                                    esc_attr( $key ),
+                                    esc_html( $label )
+                                );
+                            }
+                            ?>
+                            <p class="description">Wähle, wohin Backups gespeichert werden sollen. Mehrfachauswahl möglich.</p>
+                        </td>
+                    </tr>
+                </table>
+
+                <hr style="margin: 20px 0; border: none; border-bottom: 1px solid #f0f0f1;">
+
+                <!-- Dropbox Settings -->
+                <div id="wprb-dropbox-settings" style="display: <?php echo in_array('dropbox', $active_storage) ? 'block' : 'none'; ?>;">
+                    <h3><span class="dashicons dashicons-dropbox"></span> Dropbox Konfiguration</h3>
+                    <p class="description" style="margin-bottom: 15px;">
+                        Erstelle eine App in der <a href="https://www.dropbox.com/developers/apps" target="_blank">Dropbox App Console</a>,<br>
+                        wähle "Scoped Access", "App Folder" und füge folgende Redirect URI hinzu:<br>
+                        <code><?php echo esc_html( WPRB_Storage_Manager::get_oauth_redirect_url() ); ?></code>
+                    </p>
+
+                    <table class="form-table">
+                        <tr>
+                            <th>App Key</th>
+                            <td><input type="text" name="dropbox_app_key" class="regular-text"
+                                       value="<?php echo esc_attr( get_option( 'wprb_dropbox_app_key', '' ) ); ?>"></td>
+                        </tr>
+                        <tr>
+                            <th>App Secret</th>
+                            <td><input type="password" name="dropbox_secret" class="regular-text"
+                                       value="<?php echo esc_attr( get_option( 'wprb_dropbox_secret', '' ) ); ?>"></td>
+                        </tr>
+                        <tr>
+                            <th>Verbindung</th>
+                            <td>
+                                <?php
+                                $dropbox_token = get_option( 'wprb_dropbox_token', '' );
+                                if ( ! empty( $dropbox_token ) ) {
+                                    echo '<span class="wprb-status-ok">✅ Verbunden</span> ';
+                                    echo '<a href="#" class="wprb-disconnect-storage button button-link-delete" data-service="dropbox" style="margin-left: 10px;">Trennen</a>';
+                                } else {
+                                    $auth_url = $storage_mgr->get_dropbox_auth_url();
+                                    if ( $auth_url ) {
+                                        echo '<a href="' . esc_url( $auth_url ) . '" class="button">Mit Dropbox verbinden</a>';
+                                    } else {
+                                        echo '<span class="wprb-muted">Erst Key & Secret speichern.</span>';
+                                    }
+                                }
+                                ?>
+                            </td>
+                        </tr>
+                    </table>
+                    <hr style="margin: 20px 0; border: none; border-bottom: 1px solid #f0f0f1;">
+                </div>
+
+                <!-- Google Drive Settings -->
+                <div id="wprb-gdrive-settings" style="display: <?php echo in_array('gdrive', $active_storage) ? 'block' : 'none'; ?>;">
+                    <h3><span class="dashicons dashicons-google"></span> Google Drive Konfiguration</h3>
+                    <p class="description" style="margin-bottom: 15px;">
+                        Erstelle Credentials in der <a href="https://console.cloud.google.com/" target="_blank">Google Cloud Console</a>.<br>
+                        Redirect URI: <code><?php echo esc_html( WPRB_Storage_Manager::get_oauth_redirect_url() ); ?></code>
+                    </p>
+
+                    <table class="form-table">
+                        <tr>
+                            <th>Client ID</th>
+                            <td><input type="text" name="gdrive_client_id" class="regular-text"
+                                       value="<?php echo esc_attr( get_option( 'wprb_gdrive_client_id', '' ) ); ?>"></td>
+                        </tr>
+                        <tr>
+                            <th>Client Secret</th>
+                            <td><input type="password" name="gdrive_secret" class="regular-text"
+                                       value="<?php echo esc_attr( get_option( 'wprb_gdrive_secret', '' ) ); ?>"></td>
+                        </tr>
+                        <tr>
+                            <th>Verbindung</th>
+                            <td>
+                                <?php
+                                $gdrive_token = get_option( 'wprb_gdrive_token', '' );
+                                if ( ! empty( $gdrive_token ) ) {
+                                    echo '<span class="wprb-status-ok">✅ Verbunden</span> ';
+                                    echo '<a href="#" class="wprb-disconnect-storage button button-link-delete" data-service="gdrive" style="margin-left: 10px;">Trennen</a>';
+                                } else {
+                                    $auth_url = $storage_mgr->get_gdrive_auth_url();
+                                    if ( $auth_url ) {
+                                        echo '<a href="' . esc_url( $auth_url ) . '" class="button">Mit Google Drive verbinden</a>';
+                                    } else {
+                                        echo '<span class="wprb-muted">Erst ID & Secret speichern.</span>';
+                                    }
+                                }
+                                ?>
+                            </td>
+                        </tr>
+                    </table>
+                    <hr style="margin: 20px 0; border: none; border-bottom: 1px solid #f0f0f1;">
+                </div>
+
+                <p class="submit">
+                    <button type="submit" class="button button-primary" id="wprb-save-storage">
+                        <span class="dashicons dashicons-saved"></span> Speicher-Einstellungen sichern
+                    </button>
+                    <span id="wprb-storage-status" class="wprb-muted" style="margin-left: 10px;"></span>
+                </p>
+            </form>
         </div>
         <?php
     }

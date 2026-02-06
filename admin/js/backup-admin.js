@@ -327,17 +327,18 @@
     }
 
     // ─────────────────────────────────────────────
-    // Settings
+    // Settings & Storage
     // ─────────────────────────────────────────────
 
     function saveSettings(form) {
-        const $btn = $('#wprb-save-settings');
-        const $status = $('#wprb-settings-status');
+        const $form = $(form);
+        const $btn = $form.find('button[type="submit"]');
+        const $status = $form.find('.wprb-muted').last(); // Usually the status span is after the button
 
         $btn.prop('disabled', true);
         $status.text(data.strings.saving);
 
-        const formData = $(form).serialize();
+        const formData = $form.serialize();
 
         ajax('wprb_save_settings', $.deparam ? $.deparam(formData) : parseFormData(form))
             .done(function (response) {
@@ -376,6 +377,20 @@
         }
 
         return obj;
+    }
+    
+    // Toggle storage settings visibility
+    function toggleStorageSettings() {
+        $('.wprb-storage-checkbox').each(function() {
+            const target = $(this).data('target');
+            if (target) {
+                if ($(this).is(':checked')) {
+                    $(target).slideDown(200);
+                } else {
+                    $(target).slideUp(200);
+                }
+            }
+        });
     }
 
     // ─────────────────────────────────────────────
@@ -615,9 +630,21 @@
         });
 
         // Save settings
-        $(document).on('submit', '#wprb-settings-form', function (e) {
+        $(document).on('submit', '#wprb-settings-form, #wprb-storage-settings-form', function (e) {
             e.preventDefault();
             saveSettings(this);
+        });
+
+        // Storage Checkbox Toggle
+        $(document).on('change', '.wprb-storage-checkbox', function() {
+            const target = $(this).data('target');
+            if (target) {
+                if ($(this).is(':checked')) {
+                    $(target).slideDown(200);
+                } else {
+                    $(target).slideUp(200);
+                }
+            }
         });
 
         // Restore: select change

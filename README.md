@@ -115,7 +115,7 @@ Ist immer verfügbar. Im Tab **Backups** gibt es Download-Links für jede einzel
 
 ### Wo landen die Backups?
 
-Die Backups werden in deinem Google Drive unter einem Ordner pro Backup gespeichert, z.B. `WP-Backup-backup-2025-02-05-030000`. Dateien werden per Resumable Upload in 5MB-Chunks hochgeladen – auch bei instabiler Verbindung.
+Die Backups werden in deinem Google Drive unter einem Hauptordner `WP-Backup-deinedomain` gespeichert. Darin befindet sich für jedes Backup ein eigener Unterordner, z.B. `backup-2025-02-05-030000`. Dateien werden per Resumable Upload in 5MB-Chunks hochgeladen – auch bei instabiler Verbindung.
 
 ---
 

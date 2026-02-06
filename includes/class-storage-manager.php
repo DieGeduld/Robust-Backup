@@ -502,8 +502,23 @@ class WPRB_Storage_Manager {
             ];
         }
 
-        // Create a folder for this backup
-        $folder_id = $this->gdrive_create_folder( $access_token, 'WP-Backup-' . $backup_id );
+        // Create Root Folder Structure
+        $root_name = 'WP-Backup-' . $this->get_storage_folder_name();
+        $root_id   = $this->gdrive_get_folder_id( $access_token, $root_name );
+
+        if ( ! $root_id ) {
+            $root_id = $this->gdrive_create_folder( $access_token, $root_name );
+        }
+
+        if ( ! $root_id ) {
+            return [
+                'success' => false,
+                'message' => 'Konnte Root-Ordner auf Google Drive nicht erstellen.',
+            ];
+        }
+
+        // Create a folder for this backup inside Root
+        $folder_id = $this->gdrive_create_folder( $access_token, $backup_id, $root_id );
 
         $uploaded = 0;
         $errors   = [];
@@ -570,19 +585,52 @@ class WPRB_Storage_Manager {
     }
 
     /**
+     * Check if a folder exists and return its ID.
+     */
+    private function gdrive_get_folder_id( $access_token, $name, $parent_id = null ) {
+        $query = "mimeType = 'application/vnd.google-apps.folder' and name = '" . str_replace( "'", "\'", $name ) . "' and trashed = false";
+        if ( $parent_id ) {
+            $query .= " and '" . $parent_id . "' in parents";
+        }
+
+        $url = 'https://www.googleapis.com/drive/v3/files?q=' . urlencode( $query );
+        
+        $response = wp_remote_get( $url, [
+            'timeout' => 30,
+            'headers' => [ 'Authorization' => 'Bearer ' . $access_token ],
+        ] );
+
+        if ( is_wp_error( $response ) || wp_remote_retrieve_response_code( $response ) !== 200 ) {
+            return null;
+        }
+
+        $body = json_decode( wp_remote_retrieve_body( $response ), true );
+        if ( ! empty( $body['files'] ) ) {
+            return $body['files'][0]['id'];
+        }
+        return null;
+    }
+
+    /**
      * Create a folder on Google Drive.
      */
-    private function gdrive_create_folder( $access_token, $name ) {
+    private function gdrive_create_folder( $access_token, $name, $parent_id = null ) {
+        $body = [
+            'name'     => $name,
+            'mimeType' => 'application/vnd.google-apps.folder',
+        ];
+
+        if ( $parent_id ) {
+            $body['parents'] = [ $parent_id ];
+        }
+
         $response = wp_remote_post( 'https://www.googleapis.com/drive/v3/files', [
             'timeout' => 30,
             'headers' => [
                 'Authorization' => 'Bearer ' . $access_token,
                 'Content-Type'  => 'application/json',
             ],
-            'body' => wp_json_encode( [
-                'name'     => $name,
-                'mimeType' => 'application/vnd.google-apps.folder',
-            ] ),
+            'body' => wp_json_encode( $body ),
         ] );
 
         if ( is_wp_error( $response ) ) {

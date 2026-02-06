@@ -344,9 +344,10 @@
             .done(function (response) {
                 if (response.success) {
                     $status.text(data.strings.saved).css('color', '#00a32a');
+
                     setTimeout(function () {
-                        $status.text('').css('color', '');
-                    }, 3000);
+                        location.reload();
+                    }, 1000);
                 } else {
                     $status.text(response.data ? response.data.message : data.strings.error).css('color', '#d63638');
                 }

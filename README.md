@@ -87,7 +87,7 @@ Ist immer verfügbar. Im Tab **Backups** gibt es Download-Links für jede einzel
    - Support-E-Mail: deine E-Mail
    - Autorisierte Domains: deine Domain (z.B. `deinedomain.de`)
 4. Unter **Bereiche** (Scopes): Füge `https://www.googleapis.com/auth/drive.file` hinzu
-5. Unter **Testnutzer**: Füge deine Google-E-Mail hinzu (solange die App nicht verifiziert ist)
+5. **WICHTIG:** Unter **Testnutzer**: Füge deine eigene Google-E-Mail Adresse hinzu. Ohne das erhältst du einen "Zugriff blockiert" (Fehler 403) Screen, solange die App im Test-Modus ist.
 
 ### Schritt 4: OAuth-Anmeldedaten erstellen
 
@@ -96,8 +96,8 @@ Ist immer verfügbar. Im Tab **Backups** gibt es Download-Links für jede einzel
 3. Anwendungstyp: **Webanwendung**
 4. Name: z.B. "WP Backup Client"
 5. **Autorisierte Weiterleitungs-URIs**: Kopiere die URI aus dem Plugin!
-   - Findest du im Plugin unter **Einstellungen** ganz unten: "OAuth Redirect URI"
-   - Sieht so aus: `https://deinedomain.de/wp-admin/admin.php?page=wp-robust-backup&tab=settings&oauth_callback=1`
+   - Findest du im Plugin unter **Speicher** ganz unten: "OAuth Redirect URI"
+   - Sieht so aus: `https://deinedomain.de/wp-admin/admin.php?page=wp-robust-backup&tab=storage&oauth_callback=1`
 6. Klicke **Erstellen**
 7. Notiere **Client-ID** und **Client-Secret**
 

@@ -1090,7 +1090,7 @@ class WPRB_Storage_Manager {
      * Get the OAuth callback URL.
      */
     public static function get_oauth_redirect_url() {
-        return admin_url( 'admin.php?page=wp-robust-backup&tab=settings&oauth_callback=1' );
+        return admin_url( 'admin.php?page=wp-robust-backup&tab=storage&oauth_callback=1' );
     }
 
     /**
@@ -1150,11 +1150,17 @@ class WPRB_Storage_Manager {
 
         $code  = sanitize_text_field( $_GET['code'] );
         $state = sanitize_text_field( $_GET['state'] ?? '' );
+        $success = false;
 
         if ( $state === 'gdrive' ) {
-            $this->gdrive_exchange_code( $code );
+            $success = $this->gdrive_exchange_code( $code );
         } elseif ( $state === 'dropbox' ) {
-            $this->dropbox_exchange_code( $code );
+            $success = $this->dropbox_exchange_code( $code );
+        }
+
+        if ( $success ) {
+            wp_redirect( admin_url( 'admin.php?page=wp-robust-backup&tab=storage' ) );
+            exit;
         }
     }
 
@@ -1173,8 +1179,10 @@ class WPRB_Storage_Manager {
             $body = json_decode( wp_remote_retrieve_body( $response ), true );
             if ( isset( $body['access_token'] ) ) {
                 update_option( 'wprb_gdrive_token', wp_json_encode( $body ) );
+                return true;
             }
         }
+        return false;
     }
 
     private function dropbox_exchange_code( $code ) {
@@ -1195,8 +1203,10 @@ class WPRB_Storage_Manager {
             $body = json_decode( wp_remote_retrieve_body( $response ), true );
             if ( isset( $body['access_token'] ) ) {
                 update_option( 'wprb_dropbox_token', wp_json_encode( $body ) );
+                return true;
             }
         }
+        return false;
     }
 
     // ─────────────────────────────────────────────

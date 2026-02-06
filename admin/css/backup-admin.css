@@ -180,7 +180,8 @@
     background: #dcdcde;
     margin: 0 10px;
     position: relative;
-    top: -12px; /* Lift up to align with icon roughly */
+    top: -12px;
+    /* Lift up to align with icon roughly */
     z-index: 1;
 }
 
@@ -233,6 +234,22 @@
 /* Done line */
 .wprb-step-line.done {
     background: #2271b1;
+}
+
+/* Stepper Visibility based on Type */
+
+/* DB Only: Hide "Files" step and the line after it */
+.wprb-stepper.type-db_only #step-files,
+.wprb-stepper.type-db_only .wprb-step-line:nth-child(4) {
+    /* The line after files */
+    display: none;
+}
+
+/* Files Only: Hide "Database" step and the line after it */
+.wprb-stepper.type-files_only #step-database,
+.wprb-stepper.type-files_only .wprb-step-line:nth-child(2) {
+    /* The first line */
+    display: none;
 }
 
 #wprb-progress-message {
@@ -440,11 +457,11 @@
     background: #f0f6fc;
 }
 
-.wprb-checkbox-card input:checked ~ .dashicons {
+.wprb-checkbox-card input:checked~.dashicons {
     color: #2271b1;
 }
 
-.wprb-checkbox-card input:checked ~ span {
+.wprb-checkbox-card input:checked~span {
     color: #1d2327;
 }
 

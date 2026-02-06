@@ -134,7 +134,14 @@
         return labels[phase] || phase;
     }
 
-    function updateStepper(phase) {
+    function updateStepper(phase, type) {
+        // Set type class on wrapper for CSS filtering
+        const $stepper = $('.wprb-stepper');
+        $stepper.removeClass('type-full type-db_only type-files_only');
+        if (type) {
+            $stepper.addClass('type-' + type);
+        }
+
         // Map backend phases to stepper steps
         // Steps: database, files, upload, done
         const steps = ['database', 'files', 'upload', 'done'];
@@ -199,7 +206,7 @@
         $('#wprb-progress-percent').text(Math.round(percent) + '%');
         
         // Update Stepper
-        updateStepper(state.phase);
+        updateStepper(state.phase, state.type);
         
         // Show phase clearly above message
         const messageHtml = '<strong>' + phaseLabel + '</strong><br>' + (state.message || '');

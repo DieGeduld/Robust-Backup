@@ -182,9 +182,18 @@
         if (currentIndex > 2 || phase === 'done') $lines.eq(2).addClass('done'); // upload -> done line
     }
 
+    let currentPhase = null;
+    let phaseStartTime = null;
+
     function updateProgress(state) {
         const percent = Math.min(100, Math.max(0, state.progress || 0));
         const phaseLabel = getPhaseLabel(state.phase);
+
+        // Detect phase change
+        if (state.phase !== currentPhase) {
+            currentPhase = state.phase;
+            phaseStartTime = Date.now();
+        }
 
         $('#wprb-progress-fill').css('width', percent + '%');
         $('#wprb-progress-percent').text(Math.round(percent) + '%');
@@ -196,11 +205,31 @@
         const messageHtml = '<strong>' + phaseLabel + '</strong><br>' + (state.message || '');
         $('#wprb-progress-message').html(messageHtml);
 
-        // Update elapsed time
+        // Update elapsed time & ETA
+        let timeText = '';
+        const now = Date.now();
+
         if (startTime) {
-            const elapsed = Math.floor((Date.now() - startTime) / 1000);
-            $('#wprb-progress-time').text('Laufzeit: ' + formatTime(elapsed));
+            const elapsed = Math.floor((now - startTime) / 1000);
+            timeText += 'Laufzeit: ' + formatTime(elapsed);
         }
+
+        // Calculate ETA for current phase (only if running > 2s and progress > 2% to avoid noise)
+        if (phaseStartTime && percent > 2 && percent < 100 && (now - phaseStartTime) > 2000) {
+            const phaseElapsed = (now - phaseStartTime) / 1000;
+            const progressRatio = percent / 100;
+            
+            // Estimated Total Time for this phase = Elapsed / Ratio
+            const estimatedTotal = phaseElapsed / progressRatio;
+            const remaining = Math.max(0, Math.ceil(estimatedTotal - phaseElapsed));
+            
+            // Only show if realistic (e.g. not 0s and not huge)
+            if (remaining > 0 && remaining < 3600) {
+                timeText += ' <span style="margin: 0 5px; color: #dcdcde;">|</span> Noch ca. ' + formatTime(remaining);
+            }
+        }
+
+        $('#wprb-progress-time').html(timeText);
     }
 
     function backupComplete(state) {

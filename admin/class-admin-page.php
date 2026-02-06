@@ -22,17 +22,19 @@ class WPRB_Admin_Page {
     }
 
     public function add_menu() {
-        add_management_page(
+        add_menu_page(
             'WP Robust Backup',
             'Robust Backup',
             'manage_options',
             'wp-robust-backup',
-            [ $this, 'render_page' ]
+            [ $this, 'render_page' ],
+            'dashicons-cloud',
+            98
         );
     }
 
     public function enqueue_assets( $hook ) {
-        if ( $hook !== 'tools_page_wp-robust-backup' ) {
+        if ( strpos( $hook, 'wp-robust-backup' ) === false ) {
             return;
         }
 

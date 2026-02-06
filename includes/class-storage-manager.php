@@ -34,7 +34,7 @@ class WPRB_Storage_Manager {
                 'current_file_index'    => 0,
                 'storage_states'        => [], // To keep track of storage-specific states (e.g. dropbox session)
                 'results'               => [],
-                'start_time'            => time(),
+                'phase_start_time'      => time(), // Rename to avoid confusion
             ];
             // Initialize results
             foreach ( $storages as $s ) {
@@ -42,16 +42,18 @@ class WPRB_Storage_Manager {
             }
         }
 
-        // Time limit safety (run for max 20 seconds)
-        $time_limit = 20;
+        // Execution time limit for THIS request step
+        $execution_start_time = time();
+        $time_limit = 20; // 20 seconds per request
 
         while ( $state['current_storage_index'] < count( $storages ) ) {
             
-            if ( time() - $state['start_time'] > $time_limit ) {
+            // Check if we exceeded the time limit for this request
+            if ( time() - $execution_start_time > $time_limit ) {
                 return [
                     'done'     => false,
                     'state'    => $state,
-                    'message'  => 'Upload läuft...',
+                    'message'  => 'Upload läuft...', // Generic message, specific message comes from inner logic usually
                     'progress' => $this->calculate_upload_progress( $state, count( $storages ), count( $files ) ),
                 ];
             }
@@ -71,13 +73,12 @@ class WPRB_Storage_Manager {
                     break;
 
                 case 'dropbox':
-                    // Dropbox handles chunking internally now
-                    $result = $this->store_dropbox_step( $backup_id, $files, $state );
+                    // Pass execution start time so dropbox step also knows about time limit
+                    $result = $this->store_dropbox_step( $backup_id, $files, $state, $execution_start_time, $time_limit );
                     break;
                 
                 case 'gdrive':
                     // GDrive (todo: make resumable too, for now keeping atomic per file)
-                    // We treat it as one atomic step per file for simple migration
                      if ( empty( $state['storage_states']['gdrive_done'] ) ) {
                         $res = $this->store_gdrive( $backup_id, $files );
                         $state['results']['gdrive'] = $res;
@@ -174,7 +175,7 @@ class WPRB_Storage_Manager {
     /**
      * Resumable Dropbox Storage Step
      */
-    private function store_dropbox_step( $backup_id, $files, &$state ) {
+    private function store_dropbox_step( $backup_id, $files, &$state, $execution_start_time = 0, $time_limit = 15 ) {
         $token = get_option( 'wprb_dropbox_token', '' );
         if ( empty( $token ) ) {
             return [ 'done' => true, 'result' => [ 'success' => false, 'message' => 'Dropbox nicht konfiguriert.' ] ];
@@ -201,10 +202,13 @@ class WPRB_Storage_Manager {
             $state['dropbox_uploaded_count'] = 0;
         }
 
+        if ( $execution_start_time === 0 ) $execution_start_time = time();
+
         while ( $state['current_file_index'] < count( $files ) ) {
             // Check global time limit via parent loop (we return control regularly)
-            if ( time() - $state['start_time'] > 15 ) {
-                return [ 'done' => false, 'message' => 'Dropbox Upload...' ];
+            if ( time() - $execution_start_time > $time_limit ) {
+                $current_file_name = basename( $files[ $state['current_file_index'] ] ?? '' );
+                return [ 'done' => false, 'message' => 'Dropbox Upload: ' . $current_file_name . ' läuft...' ];
             }
 
             $current_file = $files[ $state['current_file_index'] ];

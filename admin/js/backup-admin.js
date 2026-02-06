@@ -134,12 +134,63 @@
         return labels[phase] || phase;
     }
 
+    function updateStepper(phase) {
+        // Map backend phases to stepper steps
+        // Steps: database, files, upload, done
+        const steps = ['database', 'files', 'upload', 'done'];
+        
+        // Map 'init' to database for visual purposes
+        let currentStep = phase;
+        if (currentStep === 'init') currentStep = 'database';
+        if (currentStep === 'compress') currentStep = 'files';
+        if (currentStep === 'cleanup') currentStep = 'done';
+
+        const currentIndex = steps.indexOf(currentStep);
+
+        // Update steps
+        steps.forEach((step, index) => {
+            const $el = $('#step-' + step);
+            $el.removeClass('active done');
+
+            if (index < currentIndex || phase === 'done') {
+                $el.addClass('done');
+                // Change icon to checkmark if done
+                $el.find('.step-icon').removeClass('dashicons-database dashicons-media-archive dashicons-cloud-upload').addClass('dashicons-yes');
+            } else if (index === currentIndex && phase !== 'done') {
+                $el.addClass('active');
+                // Restore original icon (simplified logic, ideally store original class)
+                if (step === 'database') $el.find('.step-icon').removeClass('dashicons-yes').addClass('dashicons-database');
+                if (step === 'files') $el.find('.step-icon').removeClass('dashicons-yes').addClass('dashicons-media-archive');
+                if (step === 'upload') $el.find('.step-icon').removeClass('dashicons-yes').addClass('dashicons-cloud-upload');
+                if (step === 'done') $el.find('.step-icon').removeClass('dashicons-yes').addClass('dashicons-flag');
+            } else {
+                // Future steps
+                // Restore icons
+                if (step === 'database') $el.find('.step-icon').removeClass('dashicons-yes').addClass('dashicons-database');
+                if (step === 'files') $el.find('.step-icon').removeClass('dashicons-yes').addClass('dashicons-media-archive');
+                if (step === 'upload') $el.find('.step-icon').removeClass('dashicons-yes').addClass('dashicons-cloud-upload');
+                if (step === 'done') $el.find('.step-icon').removeClass('dashicons-yes').addClass('dashicons-flag');
+            }
+        });
+
+        // Update lines (simplified: if step 1 is done, line 1 is done)
+        const $lines = $('.wprb-step-line');
+        $lines.removeClass('done');
+        
+        if (currentIndex > 0 || phase === 'done') $lines.eq(0).addClass('done'); // db -> files line
+        if (currentIndex > 1 || phase === 'done') $lines.eq(1).addClass('done'); // files -> upload line
+        if (currentIndex > 2 || phase === 'done') $lines.eq(2).addClass('done'); // upload -> done line
+    }
+
     function updateProgress(state) {
         const percent = Math.min(100, Math.max(0, state.progress || 0));
         const phaseLabel = getPhaseLabel(state.phase);
 
         $('#wprb-progress-fill').css('width', percent + '%');
         $('#wprb-progress-percent').text(Math.round(percent) + '%');
+        
+        // Update Stepper
+        updateStepper(state.phase);
         
         // Show phase clearly above message
         const messageHtml = '<strong>' + phaseLabel + '</strong><br>' + (state.message || '');

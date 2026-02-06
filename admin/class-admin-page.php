@@ -168,6 +168,30 @@ class WPRB_Admin_Page {
 
                 <!-- Progress Section (hidden by default) -->
                 <div id="wprb-progress-section" style="display: none;">
+                    
+                    <!-- Stepper -->
+                    <div class="wprb-stepper">
+                        <div class="wprb-step" id="step-database">
+                            <span class="step-icon dashicons dashicons-database"></span>
+                            <span class="step-label">Datenbank</span>
+                        </div>
+                        <div class="wprb-step-line"></div>
+                        <div class="wprb-step" id="step-files">
+                            <span class="step-icon dashicons dashicons-media-archive"></span>
+                            <span class="step-label">Dateien</span>
+                        </div>
+                        <div class="wprb-step-line"></div>
+                        <div class="wprb-step" id="step-upload">
+                            <span class="step-icon dashicons dashicons-cloud-upload"></span>
+                            <span class="step-label">Upload</span>
+                        </div>
+                        <div class="wprb-step-line"></div>
+                        <div class="wprb-step" id="step-done">
+                            <span class="step-icon dashicons dashicons-yes"></span>
+                            <span class="step-label">Fertig</span>
+                        </div>
+                    </div>
+
                     <div class="wprb-progress-bar-wrapper">
                         <div class="wprb-progress-bar">
                             <div class="wprb-progress-fill" id="wprb-progress-fill" style="width: 0%;">

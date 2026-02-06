@@ -155,6 +155,86 @@
     font-size: 13px;
 }
 
+/* Stepper */
+.wprb-stepper {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+    padding: 0 10px;
+}
+
+.wprb-step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    position: relative;
+    z-index: 2;
+    flex-shrink: 0;
+}
+
+.wprb-step-line {
+    flex-grow: 1;
+    height: 2px;
+    background: #dcdcde;
+    margin: 0 10px;
+    position: relative;
+    top: -12px; /* Lift up to align with icon roughly */
+    z-index: 1;
+}
+
+.step-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: #f0f0f1;
+    color: #646970;
+    border: 2px solid #dcdcde;
+    font-size: 16px !important;
+    transition: all 0.3s ease;
+}
+
+.step-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: #646970;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* Active Step */
+.wprb-step.active .step-icon {
+    background: #fff;
+    border-color: #2271b1;
+    color: #2271b1;
+    box-shadow: 0 0 0 3px rgba(34, 113, 177, 0.15);
+}
+
+.wprb-step.active .step-label {
+    color: #2271b1;
+    font-weight: 700;
+}
+
+/* Done Step */
+.wprb-step.done .step-icon {
+    background: #2271b1;
+    border-color: #2271b1;
+    color: #fff;
+}
+
+.wprb-step.done .step-label {
+    color: #2271b1;
+}
+
+/* Done line */
+.wprb-step-line.done {
+    background: #2271b1;
+}
+
 #wprb-progress-message {
     color: #1d2327;
     font-weight: 500;

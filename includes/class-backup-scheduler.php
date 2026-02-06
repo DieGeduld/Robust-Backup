@@ -37,18 +37,52 @@ class WPRB_Backup_Scheduler {
     }
 
     /**
-     * Schedule the backup cron event.
+     * Add a new schedule.
      */
-    public static function schedule() {
-        $schedule = get_option( 'wprb_schedule', 'daily' );
-        $time     = get_option( 'wprb_schedule_time', '03:00' );
+    public static function add_schedule( $data ) {
+        $schedules = get_option( 'wprb_schedules', [] );
+        $id = uniqid( 'sched_' );
+        
+        $data['id'] = $id;
+        $data['created_at'] = time();
+        
+        $schedules[ $id ] = $data;
+        update_option( 'wprb_schedules', $schedules );
 
-        if ( $schedule === 'disabled' ) {
-            self::unschedule();
-            return;
+        // Schedule the cron event
+        self::schedule_event( $id, $data );
+
+        return $id;
+    }
+
+    /**
+     * Delete a schedule.
+     */
+    public static function delete_schedule( $id ) {
+        $schedules = get_option( 'wprb_schedules', [] );
+        
+        if ( isset( $schedules[ $id ] ) ) {
+            // Unschedule cron
+            $timestamp = wp_next_scheduled( self::CRON_HOOK, [ $id ] );
+            if ( $timestamp ) {
+                wp_unschedule_event( $timestamp, self::CRON_HOOK, [ $id ] );
+            }
+
+            unset( $schedules[ $id ] );
+            return update_option( 'wprb_schedules', $schedules );
         }
 
-        // Calculate next run time
+        return false;
+    }
+
+    /**
+     * Schedule a specific event.
+     */
+    private static function schedule_event( $id, $data ) {
+        $time = $data['time'] ?? '03:00';
+        $interval = $data['interval'] ?? 'daily';
+
+        // Calculate first run
         $parts    = explode( ':', $time );
         $hour     = (int) ( $parts[0] ?? 3 );
         $minute   = (int) ( $parts[1] ?? 0 );
@@ -58,7 +92,7 @@ class WPRB_Backup_Scheduler {
             $next_run = strtotime( "tomorrow {$hour}:{$minute}" );
         }
 
-        // Map schedule to WP cron recurrence
+        // Map interval
         $recurrence_map = [
             'hourly'  => 'hourly',
             'daily'   => 'daily',
@@ -66,39 +100,81 @@ class WPRB_Backup_Scheduler {
             'monthly' => 'wprb_monthly',
         ];
 
-        $recurrence = $recurrence_map[ $schedule ] ?? 'daily';
+        $recurrence = $recurrence_map[ $interval ] ?? 'daily';
 
-        if ( ! wp_next_scheduled( self::CRON_HOOK ) ) {
-            wp_schedule_event( $next_run, $recurrence, self::CRON_HOOK );
+        // Schedule only if not already there
+        if ( ! wp_next_scheduled( self::CRON_HOOK, [ $id ] ) ) {
+            wp_schedule_event( $next_run, $recurrence, self::CRON_HOOK, [ $id ] );
         }
     }
 
     /**
-     * Unschedule the backup cron event.
+     * Re-schedule all active schedules (e.g. on plugin init).
+     */
+    public static function schedule() {
+        $schedules = get_option( 'wprb_schedules', [] );
+        foreach ( $schedules as $id => $data ) {
+            if ( ! wp_next_scheduled( self::CRON_HOOK, [ $id ] ) ) {
+                self::schedule_event( $id, $data );
+            }
+        }
+    }
+
+    /**
+     * Unschedule all events (e.g. on deactivation).
      */
     public static function unschedule() {
-        $timestamp = wp_next_scheduled( self::CRON_HOOK );
-        if ( $timestamp ) {
-            wp_unschedule_event( $timestamp, self::CRON_HOOK );
+        $schedules = get_option( 'wprb_schedules', [] );
+        foreach ( $schedules as $id => $data ) {
+            $timestamp = wp_next_scheduled( self::CRON_HOOK, [ $id ] );
+            if ( $timestamp ) {
+                wp_unschedule_event( $timestamp, self::CRON_HOOK, [ $id ] );
+            }
         }
-        wp_clear_scheduled_hook( self::CRON_HOOK );
     }
 
     /**
      * Run the scheduled backup.
+     * 
+     * @param string $schedule_id Optional schedule ID.
      */
-    public static function run_scheduled_backup() {
+    public static function run_scheduled_backup( $schedule_id = null ) {
         // Increase limits for cron execution
         @set_time_limit( 0 );
         @ini_set( 'memory_limit', '512M' );
 
+        $schedules = get_option( 'wprb_schedules', [] );
+        
+        // Defaults if no specific schedule found (legacy fallback or error)
+        $type = 'full';
+        $destinations = ['local'];
+
+        if ( $schedule_id && isset( $schedules[ $schedule_id ] ) ) {
+            $sched = $schedules[ $schedule_id ];
+            $type = $sched['type'] ?? 'full';
+            $destinations = $sched['destinations'] ?? ['local'];
+        }
+
+        // Configure Engine for this run
+        // Note: Engine currently pulls from global options. 
+        // We need to inject these specific settings or update options temporarily.
+        // Better: Pass config to run_full_backup() if supported, or update the engine to support overrides.
+        // For now, let's assume valid default behavior but we need to pass destinations to the storage manager later?
+        // Actually, Backup Engine reads 'wprb_storage' option. We might need to filter it.
+        
+        // Filter storage option for this run
+        add_filter( 'option_wprb_storage', function() use ($destinations) {
+            return $destinations;
+        });
+
         $engine = new WPRB_Backup_Engine();
-        $result = $engine->run_full_backup();
+        $result = $engine->run_full_backup( $type ); // Engine needs to support type argument!
 
         // Log result
         $status  = empty( $result['errors'] ) ? 'OK' : 'mit Fehlern';
         $message = sprintf(
-            '[Cron] Geplantes Backup %s: %s',
+            '[Cron] Geplantes Backup (%s) %s: %s',
+            $schedule_id ? "ID: $schedule_id" : 'Global',
             $status,
             $result['message'] ?? ''
         );
@@ -115,12 +191,24 @@ class WPRB_Backup_Scheduler {
     }
 
     /**
-     * Get info about the next scheduled backup.
+     * Get info about the next scheduled backup (nearest one).
      */
     public static function get_next_scheduled() {
-        $timestamp = wp_next_scheduled( self::CRON_HOOK );
+        $schedules = get_option( 'wprb_schedules', [] );
+        $next_timestamp = false;
+        $next_schedule_id = null;
 
-        if ( ! $timestamp ) {
+        foreach ( $schedules as $id => $data ) {
+            $ts = wp_next_scheduled( self::CRON_HOOK, [ $id ] );
+            if ( $ts ) {
+                if ( ! $next_timestamp || $ts < $next_timestamp ) {
+                    $next_timestamp = $ts;
+                    $next_schedule_id = $id;
+                }
+            }
+        }
+
+        if ( ! $next_timestamp ) {
             return [
                 'scheduled' => false,
                 'message'   => 'Kein Backup geplant.',
@@ -129,9 +217,10 @@ class WPRB_Backup_Scheduler {
 
         return [
             'scheduled' => true,
-            'timestamp' => $timestamp,
-            'date'      => date_i18n( 'd.m.Y H:i', $timestamp ),
-            'in'        => human_time_diff( time(), $timestamp ),
+            'timestamp' => $next_timestamp,
+            'date'      => date_i18n( 'd.m.Y H:i', $next_timestamp ),
+            'in'        => human_time_diff( time(), $next_timestamp ),
+            'id'        => $next_schedule_id // Optional: which schedule is next
         ];
     }
 }

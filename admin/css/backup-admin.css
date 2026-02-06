@@ -277,6 +277,17 @@
     height: 16px;
 }
 
+/* Badges */
+.wprb-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    background: #f0f0f1;
+    border-radius: 4px;
+    font-size: 11px;
+    color: #50575e;
+    font-weight: 500;
+}
+
 /* Notices */
 .wprb-notice {
     display: flex;
@@ -292,6 +303,13 @@
     background: #edfaef;
     border: 1px solid #00a32a;
     color: #00a32a;
+}
+
+.wprb-notice-warning {
+    background: #fff8e1;
+    border: 1px solid #ffb300;
+    color: #b32d2e;
+    /* Dark red/brown for text readability on yellow */
 }
 
 .wprb-notice-error {

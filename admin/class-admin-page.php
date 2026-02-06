@@ -102,6 +102,10 @@ class WPRB_Admin_Page {
                    class="nav-tab <?php echo $tab === 'settings' ? 'nav-tab-active' : ''; ?>">
                     <span class="dashicons dashicons-admin-settings"></span> Einstellungen
                 </a>
+                <a href="?page=wp-robust-backup&tab=schedules"
+                   class="nav-tab <?php echo $tab === 'schedules' ? 'nav-tab-active' : ''; ?>">
+                    <span class="dashicons dashicons-calendar-alt"></span> Zeitpläne
+                </a>
                 <a href="?page=wp-robust-backup&tab=storage"
                    class="nav-tab <?php echo $tab === 'storage' ? 'nav-tab-active' : ''; ?>">
                     <span class="dashicons dashicons-cloud"></span> Speicher
@@ -126,6 +130,9 @@ class WPRB_Admin_Page {
                         break;
                     case 'settings':
                         $this->render_settings();
+                        break;
+                    case 'schedules':
+                        $this->render_schedules();
                         break;
                     case 'storage':
                         $this->render_storage();
@@ -482,6 +489,155 @@ class WPRB_Admin_Page {
     }
 
     // ─────────────────────────────────────────────
+    // Schedules Tab
+    // ─────────────────────────────────────────────
+
+    private function render_schedules() {
+        $schedules = get_option( 'wprb_schedules', [] );
+        $storage_mgr = new WPRB_Storage_Manager();
+        $connected_storages = $this->get_connected_storages();
+        ?>
+        <div class="wprb-card">
+            <h2>Aktive Zeitpläne</h2>
+            
+            <?php if ( empty( $schedules ) ) : ?>
+                <p class="wprb-muted">Keine Zeitpläne eingerichtet.</p>
+            <?php else : ?>
+                <table class="wp-list-table widefat fixed striped">
+                    <thead>
+                        <tr>
+                            <th>Intervall</th>
+                            <th>Zeit</th>
+                            <th>Typ</th>
+                            <th>Ziele</th>
+                            <th>Nächster Lauf</th>
+                            <th>Aktionen</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ( $schedules as $id => $sched ) : ?>
+                            <tr>
+                                <td>
+                                    <?php
+                                    $labels = [ 'hourly' => 'Stündlich', 'daily' => 'Täglich', 'weekly' => 'Wöchentlich', 'monthly' => 'Monatlich' ];
+                                    echo esc_html( $labels[ $sched['interval'] ] ?? $sched['interval'] );
+                                    ?>
+                                </td>
+                                <td><?php echo esc_html( $sched['time'] ); ?></td>
+                                <td>
+                                    <?php
+                                    $types = [ 'full' => 'Vollständig', 'db_only' => 'Nur DB', 'files_only' => 'Nur Dateien' ];
+                                    echo esc_html( $types[ $sched['type'] ] ?? $sched['type'] );
+                                    ?>
+                                </td>
+                                <td>
+                                    <?php
+                                    foreach ( $sched['destinations'] as $dest ) {
+                                        echo '<span class="wprb-badge">' . esc_html( ucfirst( $dest ) ) . '</span> ';
+                                    }
+                                    ?>
+                                </td>
+                                <td>
+                                    <?php
+                                    $next = wp_next_scheduled( 'wprb_scheduled_backup', [ $id ] );
+                                    echo $next ? date_i18n( 'd.m.Y H:i', $next ) : 'Inaktiv';
+                                    ?>
+                                </td>
+                                <td>
+                                    <button class="button button-small wprb-delete-schedule" data-id="<?php echo esc_attr( $id ); ?>">
+                                        <span class="dashicons dashicons-trash"></span> Löschen
+                                    </button>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+        </div>
+
+        <div class="wprb-card wprb-card-primary">
+            <h2>Neuen Zeitplan erstellen</h2>
+            <form id="wprb-add-schedule-form">
+                <input type="hidden" name="action" value="wprb_add_schedule">
+                <input type="hidden" name="nonce" value="<?php echo wp_create_nonce('wprb_nonce'); ?>">
+
+                <table class="form-table">
+                    <tr>
+                        <th>Intervall</th>
+                        <td>
+                            <select name="interval">
+                                <option value="hourly">Stündlich</option>
+                                <option value="daily" selected>Täglich</option>
+                                <option value="weekly">Wöchentlich</option>
+                                <option value="monthly">Monatlich</option>
+                            </select>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Uhrzeit</th>
+                        <td>
+                            <input type="time" name="time" value="03:00">
+                            <p class="description">Gilt für tägliche/wöchentliche/monatliche Backups.</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Backup-Typ</th>
+                        <td>
+                            <select name="type">
+                                <option value="full">Vollständig (DB + Dateien)</option>
+                                <option value="db_only">Nur Datenbank</option>
+                                <option value="files_only">Nur Dateien</option>
+                            </select>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Speicherorte</th>
+                        <td>
+                            <?php if ( empty( $connected_storages ) ) : ?>
+                                <p class="wprb-notice-warning">Keine externen Speicherorte verbunden. Backup wird lokal gespeichert.</p>
+                                <input type="hidden" name="destinations[]" value="local">
+                            <?php else : ?>
+                                <label><input type="checkbox" name="destinations[]" value="local" checked> Lokal</label><br>
+                                <?php foreach ( $connected_storages as $storage ) : ?>
+                                    <label>
+                                        <input type="checkbox" name="destinations[]" value="<?php echo esc_attr( $storage ); ?>"> 
+                                        <?php echo esc_html( ucfirst( $storage ) ); ?>
+                                    </label><br>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                </table>
+                
+                <p class="submit">
+                    <button type="submit" class="button button-primary">
+                        <span class="dashicons dashicons-plus"></span> Zeitplan hinzufügen
+                    </button>
+                </p>
+            </form>
+        </div>
+        <?php
+    }
+
+
+
+    /**
+     * Helper to get list of actually connected storages (with tokens)
+     */
+    private function get_connected_storages() {
+        $connected = [];
+        // Check Dropbox
+        if ( get_option( 'wprb_dropbox_token' ) ) {
+            $connected[] = 'dropbox';
+        }
+        // Check GDrive
+        if ( get_option( 'wprb_gdrive_token' ) ) {
+            $connected[] = 'gdrive';
+        }
+        return $connected;
+    }
+
+    // ─────────────────────────────────────────────
     // Settings Tab
     // ─────────────────────────────────────────────
 
@@ -492,51 +648,6 @@ class WPRB_Admin_Page {
 
             <form id="wprb-settings-form">
                 <input type="hidden" name="tab" value="settings">
-
-                <!-- Schedule -->
-                <h3>Zeitplan</h3>
-                <table class="form-table">
-                    <tr>
-                        <th>Automatisches Backup</th>
-                        <td>
-                            <select name="schedule" id="wprb-schedule">
-                                <?php
-                                $schedule = get_option( 'wprb_schedule', 'daily' );
-                                $options  = [
-                                    'disabled' => 'Deaktiviert',
-                                    'hourly'   => 'Stündlich',
-                                    'daily'    => 'Täglich',
-                                    'weekly'   => 'Wöchentlich',
-                                    'monthly'  => 'Monatlich',
-                                ];
-                                foreach ( $options as $val => $label ) {
-                                    printf(
-                                        '<option value="%s" %s>%s</option>',
-                                        esc_attr( $val ),
-                                        selected( $schedule, $val, false ),
-                                        esc_html( $label )
-                                    );
-                                }
-                                ?>
-                            </select>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th>Uhrzeit</th>
-                        <td>
-                            <input type="time" name="schedule_time" value="<?php echo esc_attr( get_option( 'wprb_schedule_time', '03:00' ) ); ?>">
-                            <p class="description">Empfohlen: Nachts, wenn wenig Traffic ist.</p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th>Aufbewahrung</th>
-                        <td>
-                            <input type="number" name="retention" min="1" max="100"
-                                   value="<?php echo esc_attr( get_option( 'wprb_retention', 5 ) ); ?>">
-                            <p class="description">Anzahl der Backups, die behalten werden. Ältere werden automatisch gelöscht.</p>
-                        </td>
-                    </tr>
-                </table>
 
                 <!-- Performance -->
                 <h3>Performance</h3>

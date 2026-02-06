@@ -394,6 +394,47 @@
     }
 
     // ─────────────────────────────────────────────
+    // Schedules
+    // ─────────────────────────────────────────────
+
+    function addSchedule(form) {
+        const $btn = $(form).find('button[type="submit"]');
+        $btn.prop('disabled', true);
+
+        const formData = $(form).serialize();
+
+        ajax('wprb_add_schedule', $.deparam ? $.deparam(formData) : parseFormData(form))
+            .done(function (response) {
+                if (response.success) {
+                    location.reload();
+                } else {
+                    alert(response.data ? response.data.message : data.strings.error);
+                    $btn.prop('disabled', false);
+                }
+            })
+            .fail(function () {
+                alert(data.strings.error);
+                $btn.prop('disabled', false);
+            });
+    }
+
+    function deleteSchedule(id) {
+        if (!confirm('Diesen Zeitplan wirklich löschen?')) return;
+
+        ajax('wprb_delete_schedule', { schedule_id: id })
+            .done(function (response) {
+                if (response.success) {
+                    location.reload();
+                } else {
+                    alert(response.data ? response.data.message : data.strings.error);
+                }
+            })
+            .fail(function () {
+                alert(data.strings.error);
+            });
+    }
+
+    // ─────────────────────────────────────────────
     // Restore
     // ─────────────────────────────────────────────
 
@@ -627,6 +668,17 @@
         $(document).on('click', '.wprb-delete-backup', function (e) {
             e.preventDefault();
             deleteBackup($(this).data('id'));
+        });
+
+        // Schedules
+        $(document).on('submit', '#wprb-add-schedule-form', function (e) {
+            e.preventDefault();
+            addSchedule(this);
+        });
+
+        $(document).on('click', '.wprb-delete-schedule', function (e) {
+            e.preventDefault();
+            deleteSchedule($(this).data('id'));
         });
 
         // Save settings

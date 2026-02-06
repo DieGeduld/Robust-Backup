@@ -334,9 +334,11 @@ class WPRB_Backup_Engine {
 
     /**
      * Run a full backup (used by cron / CLI).
+     * 
+     * @param string $type Optional. Backup type ('full', 'db_only', 'files_only'). Default 'full'.
      */
-    public function run_full_backup() {
-        $this->start( 'full' );
+    public function run_full_backup( $type = 'full' ) {
+        $this->start( $type );
 
         $max_iterations = 10000; // Safety limit
         $i = 0;

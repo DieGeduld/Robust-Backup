@@ -22,6 +22,10 @@ class WPRB_Ajax_Handler {
         add_action( 'wp_ajax_wprb_save_settings', [ $this, 'save_settings' ] );
         add_action( 'wp_ajax_wprb_disconnect_storage', [ $this, 'disconnect_storage' ] );
 
+        // Schedule operations
+        add_action( 'wp_ajax_wprb_add_schedule', [ $this, 'add_schedule' ] );
+        add_action( 'wp_ajax_wprb_delete_schedule', [ $this, 'delete_schedule' ] );
+
         // Restore operations
         add_action( 'wp_ajax_wprb_analyze_backup', [ $this, 'analyze_backup' ] );
         add_action( 'wp_ajax_wprb_start_restore', [ $this, 'start_restore' ] );
@@ -201,6 +205,57 @@ class WPRB_Ajax_Handler {
     public function handle_download() {
         $storage = new WPRB_Storage_Manager();
         $storage->stream_download();
+    }
+
+    // ─────────────────────────────────────────────
+    // Schedule Operations
+    // ─────────────────────────────────────────────
+
+    /**
+     * Add a new schedule.
+     */
+    public function add_schedule() {
+        $this->verify();
+
+        $data = [
+            'interval'     => sanitize_text_field( $_POST['interval'] ?? 'daily' ),
+            'time'         => sanitize_text_field( $_POST['time'] ?? '03:00' ),
+            'type'         => sanitize_text_field( $_POST['type'] ?? 'full' ),
+            'destinations' => array_map( 'sanitize_text_field', (array) ( $_POST['destinations'] ?? [ 'local' ] ) ),
+        ];
+
+        // Basic validation
+        if ( ! in_array( $data['interval'], [ 'hourly', 'daily', 'weekly', 'monthly' ] ) ) {
+            wp_send_json_error( [ 'message' => 'Ungültiges Intervall.' ] );
+        }
+
+        $result = WPRB_Backup_Scheduler::add_schedule( $data );
+
+        if ( $result ) {
+            wp_send_json_success( [ 'message' => 'Zeitplan erstellt.' ] );
+        } else {
+            wp_send_json_error( [ 'message' => 'Fehler beim Erstellen des Zeitplans.' ] );
+        }
+    }
+
+    /**
+     * Delete a schedule.
+     */
+    public function delete_schedule() {
+        $this->verify();
+
+        $id = sanitize_text_field( $_POST['schedule_id'] ?? '' );
+        if ( empty( $id ) ) {
+            wp_send_json_error( [ 'message' => 'Keine ID angegeben.' ] );
+        }
+
+        $result = WPRB_Backup_Scheduler::delete_schedule( $id );
+
+        if ( $result ) {
+            wp_send_json_success( [ 'message' => 'Zeitplan gelöscht.' ] );
+        } else {
+            wp_send_json_error( [ 'message' => 'Fehler beim Löschen.' ] );
+        }
     }
 
     // ─────────────────────────────────────────────

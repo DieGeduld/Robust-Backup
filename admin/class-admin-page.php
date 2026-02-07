@@ -22,19 +22,85 @@ class WPRB_Admin_Page {
     }
 
     public function add_menu() {
+        // Main Menu (Dashboard)
         add_menu_page(
             'WP Robust Backup',
             'Robust Backup',
             'manage_options',
             'wp-robust-backup',
-            [ $this, 'render_page' ],
+            [ $this, 'render_dashboard_page' ],
             'dashicons-cloud',
             98
+        );
+
+        // Rename first submenu to "Dashboard"
+        add_submenu_page(
+            'wp-robust-backup',
+            'Dashboard',
+            'Dashboard',
+            'manage_options',
+            'wp-robust-backup',
+            [ $this, 'render_dashboard_page' ]
+        );
+
+        add_submenu_page(
+            'wp-robust-backup',
+            'Backups',
+            'Backups',
+            'manage_options',
+            'wprb-backups',
+            [ $this, 'render_backups_page' ]
+        );
+
+        add_submenu_page(
+            'wp-robust-backup',
+            'Wiederherstellen',
+            'Wiederherstellen',
+            'manage_options',
+            'wprb-restore',
+            [ $this, 'render_restore_page' ]
+        );
+
+        add_submenu_page(
+            'wp-robust-backup',
+            'Zeitpläne',
+            'Zeitpläne',
+            'manage_options',
+            'wprb-schedules',
+            [ $this, 'render_schedules_page' ]
+        );
+
+        add_submenu_page(
+            'wp-robust-backup',
+            'Speicher',
+            'Speicher',
+            'manage_options',
+            'wprb-storage',
+            [ $this, 'render_storage_page' ]
+        );
+
+        add_submenu_page(
+            'wp-robust-backup',
+            'Einstellungen',
+            'Einstellungen',
+            'manage_options',
+            'wprb-settings',
+            [ $this, 'render_settings_page' ]
+        );
+
+        add_submenu_page(
+            'wp-robust-backup',
+            'Log',
+            'Log',
+            'manage_options',
+            'wprb-log',
+            [ $this, 'render_log_page' ]
         );
     }
 
     public function enqueue_assets( $hook ) {
-        if ( strpos( $hook, 'wp-robust-backup' ) === false ) {
+        // Check if we are on any of our plugin pages
+        if ( strpos( $hook, 'wp-robust-backup' ) === false && strpos( $hook, 'wprb-' ) === false ) {
             return;
         }
 
@@ -70,14 +136,46 @@ class WPRB_Admin_Page {
     }
 
     public function handle_oauth_callback() {
-        if ( isset( $_GET['page'] ) && $_GET['page'] === 'wp-robust-backup' && isset( $_GET['oauth_callback'] ) ) {
+        // Allow callback on dashboard or storage page
+        if ( isset( $_GET['page'] ) && ( $_GET['page'] === 'wp-robust-backup' || $_GET['page'] === 'wprb-storage' ) && isset( $_GET['oauth_callback'] ) ) {
             $storage = new WPRB_Storage_Manager();
             $storage->handle_oauth_callback();
         }
     }
 
-    public function render_page() {
-        $tab = sanitize_text_field( $_GET['tab'] ?? 'dashboard' );
+    // ─────────────────────────────────────────────
+    // Page Wrappers
+    // ─────────────────────────────────────────────
+
+    public function render_dashboard_page() {
+        $this->render_page_wrapper( 'dashboard' );
+    }
+
+    public function render_backups_page() {
+        $this->render_page_wrapper( 'backups' );
+    }
+
+    public function render_restore_page() {
+        $this->render_page_wrapper( 'restore' );
+    }
+
+    public function render_schedules_page() {
+        $this->render_page_wrapper( 'schedules' );
+    }
+
+    public function render_storage_page() {
+        $this->render_page_wrapper( 'storage' );
+    }
+
+    public function render_settings_page() {
+        $this->render_page_wrapper( 'settings' );
+    }
+
+    public function render_log_page() {
+        $this->render_page_wrapper( 'log' );
+    }
+
+    private function render_page_wrapper( $subpage ) {
         ?>
         <div class="wrap wprb-wrap">
             <h1>
@@ -85,40 +183,9 @@ class WPRB_Admin_Page {
                 WP Robust Backup
             </h1>
 
-            <nav class="nav-tab-wrapper wprb-tabs">
-                <a href="?page=wp-robust-backup&tab=dashboard"
-                   class="nav-tab <?php echo $tab === 'dashboard' ? 'nav-tab-active' : ''; ?>">
-                    <span class="dashicons dashicons-dashboard"></span> Dashboard
-                </a>
-                <a href="?page=wp-robust-backup&tab=backups"
-                   class="nav-tab <?php echo $tab === 'backups' ? 'nav-tab-active' : ''; ?>">
-                    <span class="dashicons dashicons-archive"></span> Backups
-                </a>
-                <a href="?page=wp-robust-backup&tab=restore"
-                   class="nav-tab <?php echo $tab === 'restore' ? 'nav-tab-active' : ''; ?>">
-                    <span class="dashicons dashicons-undo"></span> Wiederherstellen
-                </a>
-                <a href="?page=wp-robust-backup&tab=settings"
-                   class="nav-tab <?php echo $tab === 'settings' ? 'nav-tab-active' : ''; ?>">
-                    <span class="dashicons dashicons-admin-settings"></span> Einstellungen
-                </a>
-                <a href="?page=wp-robust-backup&tab=schedules"
-                   class="nav-tab <?php echo $tab === 'schedules' ? 'nav-tab-active' : ''; ?>">
-                    <span class="dashicons dashicons-calendar-alt"></span> Zeitpläne
-                </a>
-                <a href="?page=wp-robust-backup&tab=storage"
-                   class="nav-tab <?php echo $tab === 'storage' ? 'nav-tab-active' : ''; ?>">
-                    <span class="dashicons dashicons-cloud"></span> Speicher
-                </a>
-                <a href="?page=wp-robust-backup&tab=log"
-                   class="nav-tab <?php echo $tab === 'log' ? 'nav-tab-active' : ''; ?>">
-                    <span class="dashicons dashicons-editor-alignleft"></span> Log
-                </a>
-            </nav>
-
             <div class="wprb-content">
                 <?php
-                switch ( $tab ) {
+                switch ( $subpage ) {
                     case 'dashboard':
                         $this->render_dashboard();
                         break;
@@ -866,11 +933,11 @@ class WPRB_Admin_Page {
                 <div class="wprb-log-actions">
                     <!-- Mode Switch -->
                     <div class="button-group">
-                        <a href="?page=wp-robust-backup&tab=log&log_mode=normal" 
+                        <a href="?page=wprb-log&log_mode=normal" 
                            class="button <?php echo $mode === 'normal' ? 'button-primary' : 'button-secondary'; ?>">
                            Normal
                         </a>
-                        <a href="?page=wp-robust-backup&tab=log&log_mode=detailed" 
+                        <a href="?page=wprb-log&log_mode=detailed" 
                            class="button <?php echo $mode === 'detailed' ? 'button-primary' : 'button-secondary'; ?>">
                            Detailliert
                         </a>

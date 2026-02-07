@@ -1147,7 +1147,7 @@ class WPRB_Storage_Manager {
      * Get the OAuth callback URL.
      */
     public static function get_oauth_redirect_url() {
-        return admin_url( 'admin.php?page=wp-robust-backup&tab=storage&oauth_callback=1' );
+        return admin_url( 'admin.php?page=wprb-storage&oauth_callback=1' );
     }
 
     /**
@@ -1216,7 +1216,7 @@ class WPRB_Storage_Manager {
         }
 
         if ( $success ) {
-            wp_redirect( admin_url( 'admin.php?page=wp-robust-backup&tab=storage' ) );
+            wp_redirect( admin_url( 'admin.php?page=wprb-storage' ) );
             exit;
         }
     }

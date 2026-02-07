@@ -177,6 +177,29 @@ class WPRB_Ajax_Handler {
                 update_option( 'wprb_dropbox_secret', sanitize_text_field( $_POST['dropbox_secret'] ) );
             }
             
+            // SFTP
+            if ( isset( $_POST['sftp_host'] ) ) {
+                update_option( 'wprb_sftp_host', sanitize_text_field( $_POST['sftp_host'] ) );
+                update_option( 'wprb_sftp_port', intval( $_POST['sftp_port'] ) );
+                update_option( 'wprb_sftp_user', sanitize_text_field( $_POST['sftp_user'] ) );
+                if ( ! empty( $_POST['sftp_pass'] ) ) {
+                    update_option( 'wprb_sftp_pass', sanitize_text_field( $_POST['sftp_pass'] ) );
+                }
+                update_option( 'wprb_sftp_path', sanitize_text_field( $_POST['sftp_path'] ) );
+                update_option( 'wprb_sftp_proto', sanitize_text_field( $_POST['sftp_proto'] ) );
+            }
+
+            // S3
+            if ( isset( $_POST['s3_key'] ) ) {
+                update_option( 'wprb_s3_endpoint', sanitize_text_field( $_POST['s3_endpoint'] ) );
+                update_option( 'wprb_s3_region', sanitize_text_field( $_POST['s3_region'] ) );
+                update_option( 'wprb_s3_key', sanitize_text_field( $_POST['s3_key'] ) );
+                if ( ! empty( $_POST['s3_secret'] ) ) {
+                     update_option( 'wprb_s3_secret', sanitize_text_field( $_POST['s3_secret'] ) );
+                }
+                update_option( 'wprb_s3_bucket', sanitize_text_field( $_POST['s3_bucket'] ) );
+            }
+            
             wp_send_json_success( [ 'message' => 'Speicher-Einstellungen gespeichert.' ] );
         }
 

@@ -762,6 +762,14 @@ class WPRB_Admin_Page {
         if ( get_option( 'wprb_gdrive_token' ) ) {
             $connected[] = 'gdrive';
         }
+        // Check SFTP
+        if ( get_option( 'wprb_sftp_host' ) && get_option( 'wprb_sftp_user' ) ) {
+            $connected[] = 'sftp';
+        }
+        // Check S3
+        if ( get_option( 'wprb_s3_key' ) && get_option( 'wprb_s3_bucket' ) ) {
+            $connected[] = 's3';
+        }
         return $connected;
     }
 
@@ -873,6 +881,8 @@ class WPRB_Admin_Page {
                                 'local'   => 'Lokal auf dem Server',
                                 'dropbox' => 'Dropbox',
                                 'gdrive'  => 'Google Drive',
+                                'sftp'    => 'SFTP / FTP',
+                                's3'      => 'AWS S3 (oder kompatibel)',
                             ];
                             foreach ( $storage_opts as $key => $label ) {
                                 printf(
@@ -971,6 +981,84 @@ class WPRB_Admin_Page {
                                 }
                                 ?>
                             </td>
+                        </tr>
+                    </table>
+                    <hr style="margin: 20px 0; border: none; border-bottom: 1px solid #f0f0f1;">
+                </div>
+
+                <!-- SFTP Settings -->
+                <div id="wprb-sftp-settings" style="display: <?php echo in_array('sftp', $active_storage) ? 'block' : 'none'; ?>;">
+                    <h3><span class="dashicons dashicons-admin-network"></span> SFTP / FTP Konfiguration</h3>
+                    <table class="form-table">
+                        <tr>
+                            <th>Host</th>
+                            <td><input type="text" name="sftp_host" class="regular-text" placeholder="ftp.example.com"
+                                       value="<?php echo esc_attr( get_option( 'wprb_sftp_host', '' ) ); ?>"></td>
+                        </tr>
+                        <tr>
+                            <th>Port</th>
+                            <td><input type="number" name="sftp_port" class="small-text" placeholder="22"
+                                       value="<?php echo esc_attr( get_option( 'wprb_sftp_port', '22' ) ); ?>"></td>
+                        </tr>
+                        <tr>
+                            <th>Benutzer</th>
+                            <td><input type="text" name="sftp_user" class="regular-text"
+                                       value="<?php echo esc_attr( get_option( 'wprb_sftp_user', '' ) ); ?>"></td>
+                        </tr>
+                        <tr>
+                            <th>Passwort</th>
+                            <td><input type="password" name="sftp_pass" class="regular-text"
+                                       value="<?php echo esc_attr( get_option( 'wprb_sftp_pass', '' ) ); ?>"></td>
+                        </tr>
+                         <tr>
+                            <th>Pfad</th>
+                            <td><input type="text" name="sftp_path" class="regular-text" placeholder="/backup/"
+                                       value="<?php echo esc_attr( get_option( 'wprb_sftp_path', '/' ) ); ?>"></td>
+                        </tr>
+                        <tr>
+                            <th>Protokoll</th>
+                            <td>
+                                <select name="sftp_proto">
+                                    <option value="sftp" <?php selected( get_option('wprb_sftp_proto'), 'sftp' ); ?>>SFTP (SSH)</option>
+                                    <option value="ftp" <?php selected( get_option('wprb_sftp_proto'), 'ftp' ); ?>>FTP</option>
+                                </select>
+                            </td>
+                        </tr>
+                    </table>
+                    <hr style="margin: 20px 0; border: none; border-bottom: 1px solid #f0f0f1;">
+                </div>
+
+                <!-- S3 Settings -->
+                <div id="wprb-s3-settings" style="display: <?php echo in_array('s3', $active_storage) ? 'block' : 'none'; ?>;">
+                    <h3><span class="dashicons dashicons-cloud-upload"></span> S3 Compatible Storage</h3>
+                    <table class="form-table">
+                        <tr>
+                            <th>Endpoint</th>
+                            <td>
+                                <input type="text" name="s3_endpoint" class="regular-text" placeholder="s3.amazonaws.com"
+                                       value="<?php echo esc_attr( get_option( 'wprb_s3_endpoint', '' ) ); ?>">
+                                <p class="description">Leer lassen für AWS Standard. Benötigt für MinIO, Wasabi, DO Spaces etc.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Region</th>
+                            <td><input type="text" name="s3_region" class="small-text" placeholder="us-east-1"
+                                       value="<?php echo esc_attr( get_option( 'wprb_s3_region', 'us-east-1' ) ); ?>"></td>
+                        </tr>
+                        <tr>
+                            <th>Access Key</th>
+                            <td><input type="text" name="s3_key" class="regular-text"
+                                       value="<?php echo esc_attr( get_option( 'wprb_s3_key', '' ) ); ?>"></td>
+                        </tr>
+                        <tr>
+                            <th>Secret Key</th>
+                            <td><input type="password" name="s3_secret" class="regular-text"
+                                       value="<?php echo esc_attr( get_option( 'wprb_s3_secret', '' ) ); ?>"></td>
+                        </tr>
+                        <tr>
+                            <th>Bucket</th>
+                            <td><input type="text" name="s3_bucket" class="regular-text"
+                                       value="<?php echo esc_attr( get_option( 'wprb_s3_bucket', '' ) ); ?>"></td>
                         </tr>
                     </table>
                     <hr style="margin: 20px 0; border: none; border-bottom: 1px solid #f0f0f1;">

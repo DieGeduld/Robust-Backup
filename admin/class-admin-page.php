@@ -814,6 +814,29 @@ class WPRB_Admin_Page {
                     </tr>
                 </table>
 
+                <!-- Benachrichtigungen -->
+                <h3>Benachrichtigungen</h3>
+                <table class="form-table">
+                    <tr>
+                        <th>Benachrichtigungen</th>
+                        <td>
+                            <select name="email_notification_type">
+                                <option value="none" <?php selected( get_option( 'wprb_email_notification_type', 'none' ), 'none' ); ?>>Deaktiviert</option>
+                                <option value="always" <?php selected( get_option( 'wprb_email_notification_type' ), 'always' ); ?>>Bei jedem Backup (Erfolg & Fehler)</option>
+                                <option value="error" <?php selected( get_option( 'wprb_email_notification_type' ), 'error' ); ?>>Nur bei Fehlern</option>
+                            </select>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Empfänger-Adresse</th>
+                        <td>
+                            <input type="email" name="notification_email" class="regular-text"
+                                   value="<?php echo esc_attr( get_option( 'wprb_notification_email', get_option( 'admin_email' ) ) ); ?>">
+                            <p class="description">Standardmäßig wird die WordPress-Admin-E-Mail verwendet.</p>
+                        </td>
+                    </tr>
+                </table>
+
                 <p class="submit">
                     <button type="submit" class="button button-primary" id="wprb-save-settings">
                         <span class="dashicons dashicons-saved"></span> Einstellungen speichern

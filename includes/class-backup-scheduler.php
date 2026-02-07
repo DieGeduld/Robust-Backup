@@ -250,6 +250,34 @@ class WPRB_Backup_Scheduler {
             '[' . wp_date( 'Y-m-d H:i:s' ) . '] ' . $message . "\n",
             FILE_APPEND | LOCK_EX
         );
+
+        // Send Email Notification
+        $notify_type = get_option( 'wprb_email_notification_type', 'none' );
+        if ( $notify_type !== 'none' ) {
+            $has_error = ! empty( $result['errors'] );
+            
+            if ( $notify_type === 'always' || ( $notify_type === 'error' && $has_error ) ) {
+                $to = get_option( 'wprb_notification_email', get_option( 'admin_email' ) );
+                $subject = sprintf(
+                    '[%s] Backup-Bericht: %s',
+                    get_bloginfo( 'name' ),
+                    $has_error ? 'Fehler' : 'Erfolgreich'
+                );
+                
+                $body  = "Backup-Bericht für " . get_bloginfo( 'url' ) . "\n\n";
+                $body .= "Status: " . ( $has_error ? 'FEHLGESCHLAGEN' : 'ERFOLGREICH' ) . "\n";
+                $body .= "Zeitplan: " . ($schedule_id ? $schedule_id : 'Global') . "\n";
+                $body .= "Nachricht: " . ($result['message'] ?? '') . "\n";
+                
+                if ( $has_error ) {
+                    $body .= "\nFehler-Details:\n" . implode( "\n", $result['errors'] ) . "\n";
+                }
+                
+                $body .= "\n\n--\nWP Robust Backup Plugin";
+                
+                wp_mail( $to, $subject, $body );
+            }
+        }
     }
 
     /**

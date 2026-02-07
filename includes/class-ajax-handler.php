@@ -147,38 +147,40 @@ class WPRB_Ajax_Handler {
     public function save_settings() {
         $this->verify();
 
-        $settings = [
-            'wprb_schedule'        => sanitize_text_field( $_POST['schedule'] ?? 'daily' ),
-            'wprb_schedule_time'   => sanitize_text_field( $_POST['schedule_time'] ?? '03:00' ),
-            'wprb_retention'       => intval( $_POST['retention'] ?? 5 ),
-            'wprb_storage'         => array_map( 'sanitize_text_field', (array) ( $_POST['storage'] ?? [ 'local' ] ) ),
-            'wprb_db_chunk_size'   => max( 100, intval( $_POST['db_chunk_size'] ?? 1000 ) ),
-            'wprb_file_batch_size' => max( 50, intval( $_POST['file_batch_size'] ?? 200 ) ),
-            'wprb_exclude_dirs'    => sanitize_textarea_field( $_POST['exclude_dirs'] ?? '' ),
-            'wprb_max_archive_size' => max( 50, intval( $_POST['max_archive_size'] ?? 500 ) ),
-        ];
+        $tab = sanitize_text_field( $_POST['tab'] ?? '' );
 
-        // Google Drive
-        if ( isset( $_POST['gdrive_client_id'] ) ) {
-            $settings['wprb_gdrive_client_id'] = sanitize_text_field( $_POST['gdrive_client_id'] );
-            $settings['wprb_gdrive_secret']    = sanitize_text_field( $_POST['gdrive_secret'] );
+        if ( $tab === 'settings' ) {
+            // Performance
+            update_option( 'wprb_db_chunk_size', max( 100, intval( $_POST['db_chunk_size'] ?? 1000 ) ) );
+            update_option( 'wprb_file_batch_size', max( 50, intval( $_POST['file_batch_size'] ?? 200 ) ) );
+            update_option( 'wprb_max_archive_size', max( 50, intval( $_POST['max_archive_size'] ?? 500 ) ) );
+            update_option( 'wprb_exclude_dirs', sanitize_textarea_field( $_POST['exclude_dirs'] ?? '' ) );
+            
+            // Notifications
+            update_option( 'wprb_email_notification_type', sanitize_text_field( $_POST['email_notification_type'] ?? 'none' ) );
+            update_option( 'wprb_notification_email', sanitize_email( $_POST['notification_email'] ?? '' ) );
+
+            wp_send_json_success( [ 'message' => 'Einstellungen gespeichert.' ] );
+        } elseif ( $tab === 'storage' ) {
+            // Storage
+            update_option( 'wprb_storage', array_map( 'sanitize_text_field', (array) ( $_POST['storage'] ?? [ 'local' ] ) ) );
+
+            // Google Drive
+            if ( isset( $_POST['gdrive_client_id'] ) ) {
+                update_option( 'wprb_gdrive_client_id', sanitize_text_field( $_POST['gdrive_client_id'] ) );
+                update_option( 'wprb_gdrive_secret', sanitize_text_field( $_POST['gdrive_secret'] ) );
+            }
+
+            // Dropbox
+            if ( isset( $_POST['dropbox_app_key'] ) ) {
+                update_option( 'wprb_dropbox_app_key', sanitize_text_field( $_POST['dropbox_app_key'] ) );
+                update_option( 'wprb_dropbox_secret', sanitize_text_field( $_POST['dropbox_secret'] ) );
+            }
+            
+            wp_send_json_success( [ 'message' => 'Speicher-Einstellungen gespeichert.' ] );
         }
 
-        // Dropbox
-        if ( isset( $_POST['dropbox_app_key'] ) ) {
-            $settings['wprb_dropbox_app_key'] = sanitize_text_field( $_POST['dropbox_app_key'] );
-            $settings['wprb_dropbox_secret']  = sanitize_text_field( $_POST['dropbox_secret'] );
-        }
-
-        foreach ( $settings as $key => $value ) {
-            update_option( $key, $value );
-        }
-
-        // Re-schedule cron
-        WPRB_Backup_Scheduler::unschedule();
-        WPRB_Backup_Scheduler::schedule();
-
-        wp_send_json_success( [ 'message' => 'Einstellungen gespeichert.' ] );
+        wp_send_json_error( [ 'message' => 'Unbekannte Anfrage.' ] );
     }
 
     /**

@@ -83,14 +83,21 @@ class WPRB_Backup_Scheduler {
         $interval = $data['interval'] ?? 'daily';
 
         // Calculate first run
+        // Calculate first run using WP Timezone
         $parts    = explode( ':', $time );
         $hour     = (int) ( $parts[0] ?? 3 );
         $minute   = (int) ( $parts[1] ?? 0 );
 
-        $next_run = strtotime( "today {$hour}:{$minute}" );
-        if ( $next_run < time() ) {
-            $next_run = strtotime( "tomorrow {$hour}:{$minute}" );
+        $tz = wp_timezone();
+        $now = new DateTime( 'now', $tz );
+        $scheduled = new DateTime( 'now', $tz );
+        $scheduled->setTime( $hour, $minute, 0 );
+
+        if ( $scheduled <= $now ) {
+            $scheduled->modify( '+1 day' );
         }
+
+        $next_run = $scheduled->getTimestamp();
 
         // Map interval
         $recurrence_map = [
@@ -185,7 +192,7 @@ class WPRB_Backup_Scheduler {
 
         file_put_contents(
             WPRB_LOG_FILE,
-            '[' . date( 'Y-m-d H:i:s' ) . '] ' . $message . "\n",
+            '[' . wp_date( 'Y-m-d H:i:s' ) . '] ' . $message . "\n",
             FILE_APPEND | LOCK_EX
         );
     }

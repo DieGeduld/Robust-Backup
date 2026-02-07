@@ -1135,7 +1135,7 @@ class WPRB_Storage_Manager {
      * Log helper for storage operations.
      */
     private function storage_log( $message ) {
-        $line = '[' . date( 'Y-m-d H:i:s' ) . '] ' . $message . "\n";
+        $line = '[' . current_time( 'mysql' ) . '] ' . $message . "\n";
         file_put_contents( WPRB_LOG_FILE, $line, FILE_APPEND | LOCK_EX );
     }
 
@@ -1329,7 +1329,7 @@ class WPRB_Storage_Manager {
 
             $backups[] = [
                 'id'            => $backup_id,
-                'date'          => $meta['date'] ?? date( 'Y-m-d H:i:s', filemtime( $dir ) ),
+                'date'          => $meta['date'] ?? wp_date( 'Y-m-d H:i:s', filemtime( $dir ) ),
                 'size'          => size_format( $size ),
                 'size_raw'      => $size,
                 'type'          => $meta['type'] ?? 'full',

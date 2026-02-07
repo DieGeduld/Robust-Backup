@@ -247,7 +247,12 @@ class WPRB_Admin_Page {
                     <h3>Nächstes geplantes Backup</h3>
                     <?php if ( $scheduler['scheduled'] ) : ?>
                         <p class="wprb-big-text"><?php echo esc_html( $scheduler['date'] ); ?></p>
-                        <p class="wprb-muted">In <?php echo esc_html( $scheduler['in'] ); ?></p>
+                        <?php 
+                        $is_overdue = isset( $scheduler['timestamp'] ) && $scheduler['timestamp'] < time();
+                        $label = $is_overdue ? 'Überfällig seit ' . $scheduler['in'] : 'In ' . $scheduler['in'];
+                        $style = $is_overdue ? 'color: #d63638;' : '';
+                        ?>
+                        <p class="wprb-muted" style="<?php echo $style; ?>"><?php echo esc_html( $label ); ?></p>
                     <?php else : ?>
                         <p class="wprb-muted">Kein automatisches Backup geplant.</p>
                     <?php endif; ?>
@@ -268,6 +273,9 @@ class WPRB_Admin_Page {
                     <p><strong>Memory:</strong> <?php echo ini_get( 'memory_limit' ); ?></p>
                     <p><strong>Timeout:</strong> <?php echo ini_get( 'max_execution_time' ); ?>s</p>
                     <p><strong>tar:</strong> <?php echo $this->check_tar() ? '✅' : '❌'; ?></p>
+                    <p><strong>WP Zeit:</strong> <?php echo current_time( 'd.m.Y H:i' ); ?></p>
+                    <p><strong>Zeitzone:</strong> <?php echo wp_timezone_string(); ?></p>
+
                 </div>
             </div>
         </div>
@@ -841,11 +849,74 @@ class WPRB_Admin_Page {
     // ─────────────────────────────────────────────
 
     private function render_log() {
+        // Handle Clear Log
+        if ( isset( $_POST['wprb_clear_log'] ) && check_admin_referer( 'wprb_clear_log_nonce' ) ) {
+            if ( file_exists( WPRB_LOG_FILE ) ) {
+                file_put_contents( WPRB_LOG_FILE, '' );
+                echo '<div class="notice notice-success is-dismissible"><p>Log wurde erfolgreich geleert.</p></div>';
+            }
+        }
+
+        $mode = isset( $_GET['log_mode'] ) && $_GET['log_mode'] === 'detailed' ? 'detailed' : 'normal';
         ?>
         <div class="wprb-card">
-            <h2>Backup-Log</h2>
-            <?php if ( file_exists( WPRB_LOG_FILE ) ) : ?>
-                <pre class="wprb-log-viewer"><?php echo esc_html( file_get_contents( WPRB_LOG_FILE ) ); ?></pre>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h2 style="margin: 0;">Backup-Log</h2>
+                
+                <div class="wprb-log-actions">
+                    <!-- Mode Switch -->
+                    <div class="button-group">
+                        <a href="?page=wp-robust-backup&tab=log&log_mode=normal" 
+                           class="button <?php echo $mode === 'normal' ? 'button-primary' : 'button-secondary'; ?>">
+                           Normal
+                        </a>
+                        <a href="?page=wp-robust-backup&tab=log&log_mode=detailed" 
+                           class="button <?php echo $mode === 'detailed' ? 'button-primary' : 'button-secondary'; ?>">
+                           Detailliert
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <div style="margin-bottom: 20px; display: flex; justify-content: flex-end;">
+                 <form method="post" style="display: inline-block;">
+                    <?php wp_nonce_field( 'wprb_clear_log_nonce' ); ?>
+                    <button type="submit" name="wprb_clear_log" class="button button-link-delete" 
+                            onclick="return confirm('Möchtest du das Log wirklich leeren?');">
+                        <span class="dashicons dashicons-trash"></span> Log leeren
+                    </button>
+                </form>
+            </div>
+
+            <?php if ( file_exists( WPRB_LOG_FILE ) && filesize( WPRB_LOG_FILE ) > 0 ) : ?>
+                <?php
+                $lines = file( WPRB_LOG_FILE ); 
+                $content = '';
+                $found = false;
+
+                if ( $lines ) {
+                    // Reverse to show newest first? Usually logs are appended.
+                    // Let's keep chronological order as per file.
+                    foreach ( $lines as $line ) {
+                        // Filter Logic
+                        if ( $mode === 'normal' ) {
+                            // If explicit DEBUG, skip
+                            if ( strpos( $line, '[DEBUG]' ) !== false ) {
+                                continue;
+                            }
+                        }
+                        $content .= htmlspecialchars( $line );
+                        $found = true;
+                    }
+                }
+                ?>
+                
+                <?php if ( $found && ! empty( $content ) ) : ?>
+                    <textarea class="wprb-log-viewer" readonly style="width: 100%; height: 500px; font-family: monospace; white-space: pre;"><?php echo $content; ?></textarea>
+                <?php else : ?>
+                    <p class="wprb-muted">Keine passenden Log-Einträge für diesen Modus gefunden.</p>
+                <?php endif; ?>
+
             <?php else : ?>
                 <p class="wprb-muted">Noch keine Log-Einträge vorhanden.</p>
             <?php endif; ?>

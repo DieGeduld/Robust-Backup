@@ -53,7 +53,7 @@ class WPRB_Backup_Engine {
             ];
         }
 
-        $backup_id = 'backup-' . date( 'Y-m-d-His' );
+        $backup_id = 'backup-' . wp_date( 'Y-m-d-His' );
         wp_mkdir_p( WPRB_BACKUP_DIR . $backup_id );
 
         $state = [
@@ -107,9 +107,12 @@ class WPRB_Backup_Engine {
 
                 if ( isset( $result['error'] ) ) {
                     $state['errors'][] = $result['error'];
+                    $this->log( 'DB-Export Fehler: ' . $result['error'], 'ERROR' );
                     $state['phase'] = self::PHASE_DONE;
                     break;
                 }
+
+                $this->log( 'DB-Chunk verarbeitet. Fortschritt: ' . $result['progress'] . '%', 'DEBUG' );
 
                 // Progress 0-100% for this phase
                 $state['progress'] = $result['progress'];
@@ -141,9 +144,12 @@ class WPRB_Backup_Engine {
 
                 if ( isset( $result['error'] ) ) {
                     $state['errors'][] = $result['error'];
+                    $this->log( 'Datei-Archivierung Fehler: ' . $result['error'], 'ERROR' );
                     $state['phase'] = self::PHASE_DONE;
                     break;
                 }
+
+                $this->log( 'Datei-Batch verarbeitet. Fortschritt: ' . $result['progress'] . '%', 'DEBUG' );
 
                 // Progress 0-100% for this phase
                 $state['progress'] = $result['progress'];
@@ -206,7 +212,7 @@ class WPRB_Backup_Engine {
                     }
 
                     $meta = [
-                        'date'         => date( 'Y-m-d H:i:s' ),
+                        'date'         => wp_date( 'Y-m-d H:i:s' ),
                         'type'         => $type,
                         'wp_version'   => get_bloginfo( 'version' ),
                         'site_url'     => get_site_url(),
@@ -240,8 +246,10 @@ class WPRB_Backup_Engine {
                         if ( ! $res['success'] ) {
                             $state['errors'][] = $storage . ': ' . $res['message'];
                             $upload_errors = true;
+                            $this->log( $storage . ': ' . $res['message'], 'ERROR' );
+                        } else {
+                            $this->log( $storage . ': ' . $res['message'], 'INFO' );
                         }
-                        $this->log( $storage . ': ' . $res['message'] );
                     }
 
                     // cleanup
@@ -364,11 +372,14 @@ class WPRB_Backup_Engine {
     }
 
     /**
-     * Simple log writer.
+     * Simple log writer with levels.
+     * 
+     * @param string $message
+     * @param string $level 'INFO', 'ERROR', 'DEBUG'
      */
-    private function log( $message ) {
-        $timestamp = date( 'Y-m-d H:i:s' );
-        $line      = "[{$timestamp}] {$message}\n";
+    private function log( $message, $level = 'INFO' ) {
+        $timestamp = wp_date( 'Y-m-d H:i:s' );
+        $line      = "[{$timestamp}] [{$level}] {$message}\n";
 
         if ( ! file_exists( WPRB_BACKUP_DIR ) ) {
             wp_mkdir_p( WPRB_BACKUP_DIR );

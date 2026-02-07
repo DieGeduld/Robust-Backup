@@ -56,6 +56,33 @@ class WPRB_Backup_Scheduler {
     }
 
     /**
+     * Update an existing schedule.
+     */
+    public static function update_schedule( $id, $data ) {
+        $schedules = get_option( 'wprb_schedules', [] );
+        
+        if ( ! isset( $schedules[ $id ] ) ) {
+            return false;
+        }
+
+        // Preserve creation time and ID
+        $data['id'] = $id;
+        $data['created_at'] = $schedules[ $id ]['created_at'] ?? time();
+        $schedules[ $id ] = $data;
+
+        update_option( 'wprb_schedules', $schedules );
+
+        // Reschedule
+        $timestamp = wp_next_scheduled( self::CRON_HOOK, [ $id ] );
+        if ( $timestamp ) {
+            wp_unschedule_event( $timestamp, self::CRON_HOOK, [ $id ] );
+        }
+        self::schedule_event( $id, $data );
+
+        return true;
+    }
+
+    /**
      * Delete a schedule.
      */
     public static function delete_schedule( $id ) {

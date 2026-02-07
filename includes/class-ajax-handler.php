@@ -24,6 +24,7 @@ class WPRB_Ajax_Handler {
 
         // Schedule operations
         add_action( 'wp_ajax_wprb_add_schedule', [ $this, 'add_schedule' ] );
+        add_action( 'wp_ajax_wprb_update_schedule', [ $this, 'update_schedule' ] );
         add_action( 'wp_ajax_wprb_delete_schedule', [ $this, 'delete_schedule' ] );
 
         // Restore operations
@@ -235,6 +236,38 @@ class WPRB_Ajax_Handler {
             wp_send_json_success( [ 'message' => 'Zeitplan erstellt.' ] );
         } else {
             wp_send_json_error( [ 'message' => 'Fehler beim Erstellen des Zeitplans.' ] );
+        }
+    }
+
+    /**
+     * Update an existing schedule.
+     */
+    public function update_schedule() {
+        $this->verify();
+
+        $id = sanitize_text_field( $_POST['schedule_id'] ?? '' );
+        if ( empty( $id ) ) {
+            wp_send_json_error( [ 'message' => 'Keine ID angegeben.' ] );
+        }
+
+        $data = [
+            'interval'     => sanitize_text_field( $_POST['interval'] ?? 'daily' ),
+            'time'         => sanitize_text_field( $_POST['time'] ?? '03:00' ),
+            'type'         => sanitize_text_field( $_POST['type'] ?? 'full' ),
+            'destinations' => array_map( 'sanitize_text_field', (array) ( $_POST['destinations'] ?? [ 'local' ] ) ),
+        ];
+
+        // Basic validation
+        if ( ! in_array( $data['interval'], [ 'hourly', 'daily', 'weekly', 'monthly' ] ) ) {
+            wp_send_json_error( [ 'message' => 'Ungültiges Intervall.' ] );
+        }
+
+        $result = WPRB_Backup_Scheduler::update_schedule( $id, $data );
+
+        if ( $result ) {
+            wp_send_json_success( [ 'message' => 'Zeitplan aktualisiert.' ] );
+        } else {
+            wp_send_json_error( [ 'message' => 'Fehler beim Aktualisieren.' ] );
         }
     }
 

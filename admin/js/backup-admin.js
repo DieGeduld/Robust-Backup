@@ -398,13 +398,15 @@
     // Schedules
     // ─────────────────────────────────────────────
 
-    function addSchedule(form) {
+    function saveSchedule(form) {
         const $btn = $(form).find('button[type="submit"]');
         $btn.prop('disabled', true);
 
         const formData = $(form).serialize();
+        const dataObj = $.deparam ? $.deparam(formData) : parseFormData(form);
+        const action = dataObj.action || 'wprb_add_schedule';
 
-        ajax('wprb_add_schedule', $.deparam ? $.deparam(formData) : parseFormData(form))
+        ajax(action, dataObj)
             .done(function (response) {
                 if (response.success) {
                     location.reload();
@@ -672,9 +674,75 @@
         });
 
         // Schedules
+        function resetScheduleForm() {
+            $('#wprb-add-schedule-form')[0].reset();
+            $('#wprb-schedule-id').val('');
+            $('#wprb-add-schedule-form input[name="action"]').val('wprb_add_schedule');
+            $('#wprb-save-schedule-btn .dashicons').removeClass('dashicons-saved').addClass('dashicons-plus');
+            $('#wprb-save-schedule-btn .btn-text').text('Zeitplan hinzufügen');
+            $('#wprb-add-schedule-wrapper h2').text('Neuen Zeitplan erstellen');
+        }
+
+        $(document).on('click', '#wprb-show-add-schedule', function (e) {
+            e.preventDefault();
+            resetScheduleForm();
+            $('#wprb-add-schedule-wrapper').slideDown(200);
+            $(this).prop('disabled', true);
+        });
+
+        $(document).on('click', '.wprb-edit-schedule', function(e) {
+            e.preventDefault();
+            var row = $(this).closest('tr');
+            var id = $(this).data('id');
+            var interval = row.data('interval');
+            var time = row.data('time');
+            var type = row.data('type');
+            var destinations = row.data('destinations'); // Already parsed by jQuery if properly encoded, else need JSON.parse
+
+            // Fill form
+            $('#wprb-schedule-id').val(id);
+            $('#wprb-add-schedule-form select[name="interval"]').val(interval);
+            $('#wprb-add-schedule-form input[name="time"]').val(time);
+            $('#wprb-add-schedule-form select[name="type"]').val(type);
+            
+            // Destinations
+            $('#wprb-add-schedule-form input[name="destinations[]"]').prop('checked', false);
+            if (destinations) {
+                // If jQuery auto-parsed JSON, fine. If string, parse it.
+                if (typeof destinations === 'string') {
+                     try { destinations = JSON.parse(destinations); } catch(e){}
+                }
+                $(destinations).each(function(i, val) {
+                    $('#wprb-add-schedule-form input[name="destinations[]"][value="' + val + '"]').prop('checked', true);
+                });
+            }
+
+            // Update UI for Edit Mode
+            $('#wprb-add-schedule-form input[name="action"]').val('wprb_update_schedule');
+            $('#wprb-save-schedule-btn .dashicons').removeClass('dashicons-plus').addClass('dashicons-saved');
+            $('#wprb-save-schedule-btn .btn-text').text('Änderungen speichern');
+            $('#wprb-add-schedule-wrapper h2').text('Zeitplan bearbeiten');
+            
+            // Show Form
+            $('#wprb-add-schedule-wrapper').slideDown(200);
+            $('#wprb-show-add-schedule').prop('disabled', true);
+            
+            // Scroll to form
+            $('html, body').animate({
+                scrollTop: $("#wprb-add-schedule-wrapper").offset().top - 50
+            }, 500);
+        });
+
+        $(document).on('click', '#wprb-cancel-add-schedule', function (e) {
+            e.preventDefault();
+            $('#wprb-add-schedule-wrapper').slideUp(200);
+            $('#wprb-show-add-schedule').prop('disabled', false);
+            setTimeout(resetScheduleForm, 200);
+        });
+
         $(document).on('submit', '#wprb-add-schedule-form', function (e) {
             e.preventDefault();
-            addSchedule(this);
+            saveSchedule(this);
         });
 
         $(document).on('click', '.wprb-delete-schedule', function (e) {

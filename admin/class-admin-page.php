@@ -569,11 +569,16 @@ class WPRB_Admin_Page {
 
     private function render_schedules() {
         $schedules = get_option( 'wprb_schedules', [] );
-        $storage_mgr = new WPRB_Storage_Manager();
         $connected_storages = $this->get_connected_storages();
         ?>
         <div class="wprb-card">
-            <h2>Aktive Zeitpläne</h2>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h2 style="margin: 0; border: none; padding: 0;">Aktive Zeitpläne</h2>
+                <button class="button button-primary" id="wprb-show-add-schedule" style="height: auto; padding: 6px 14px; font-size: 14px; display: flex; align-items: center; gap: 6px;">
+                    <span class="dashicons dashicons-plus" style="font-size: 18px; width: 18px; height: 18px;"></span>
+                    Zeitplan hinzufügen
+                </button>
+            </div>
             
             <?php if ( empty( $schedules ) ) : ?>
                 <p class="wprb-muted">Keine Zeitpläne eingerichtet.</p>
@@ -591,7 +596,12 @@ class WPRB_Admin_Page {
                     </thead>
                     <tbody>
                         <?php foreach ( $schedules as $id => $sched ) : ?>
-                            <tr>
+                            <tr id="wprb-schedule-row-<?php echo esc_attr( $id ); ?>" 
+                                data-id="<?php echo esc_attr( $id ); ?>"
+                                data-interval="<?php echo esc_attr( $sched['interval'] ); ?>"
+                                data-time="<?php echo esc_attr( $sched['time'] ); ?>"
+                                data-type="<?php echo esc_attr( $sched['type'] ); ?>"
+                                data-destinations='<?php echo json_encode( $sched['destinations'] ?? [] ); ?>'>
                                 <td>
                                     <?php
                                     $labels = [ 'hourly' => 'Stündlich', 'daily' => 'Täglich', 'weekly' => 'Wöchentlich', 'monthly' => 'Monatlich' ];
@@ -619,6 +629,9 @@ class WPRB_Admin_Page {
                                     ?>
                                 </td>
                                 <td>
+                                    <button class="button button-small wprb-edit-schedule" data-id="<?php echo esc_attr( $id ); ?>" style="margin-right: 4px;">
+                                        <span class="dashicons dashicons-edit"></span> Bearbeiten
+                                    </button>
                                     <button class="button button-small wprb-delete-schedule" data-id="<?php echo esc_attr( $id ); ?>">
                                         <span class="dashicons dashicons-trash"></span> Löschen
                                     </button>
@@ -630,66 +643,72 @@ class WPRB_Admin_Page {
             <?php endif; ?>
         </div>
 
-        <div class="wprb-card wprb-card-primary">
-            <h2>Neuen Zeitplan erstellen</h2>
-            <form id="wprb-add-schedule-form">
-                <input type="hidden" name="action" value="wprb_add_schedule">
-                <input type="hidden" name="nonce" value="<?php echo wp_create_nonce('wprb_nonce'); ?>">
+        <div id="wprb-add-schedule-wrapper" style="display: none;">
+            <div class="wprb-card wprb-card-primary">
+                <h2>Neuen Zeitplan erstellen</h2>
+                <form id="wprb-add-schedule-form">
+                    <input type="hidden" name="action" value="wprb_add_schedule">
+                    <input type="hidden" name="nonce" value="<?php echo wp_create_nonce('wprb_nonce'); ?>">
+                    <input type="hidden" name="schedule_id" id="wprb-schedule-id" value="">
 
-                <table class="form-table">
-                    <tr>
-                        <th>Intervall</th>
-                        <td>
-                            <select name="interval">
-                                <option value="hourly">Stündlich</option>
-                                <option value="daily" selected>Täglich</option>
-                                <option value="weekly">Wöchentlich</option>
-                                <option value="monthly">Monatlich</option>
-                            </select>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th>Uhrzeit</th>
-                        <td>
-                            <input type="time" name="time" value="03:00">
-                            <p class="description">Gilt für tägliche/wöchentliche/monatliche Backups.</p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th>Backup-Typ</th>
-                        <td>
-                            <select name="type">
-                                <option value="full">Vollständig (DB + Dateien)</option>
-                                <option value="db_only">Nur Datenbank</option>
-                                <option value="files_only">Nur Dateien</option>
-                            </select>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th>Speicherorte</th>
-                        <td>
-                            <?php if ( empty( $connected_storages ) ) : ?>
-                                <p class="wprb-notice-warning">Keine externen Speicherorte verbunden. Backup wird lokal gespeichert.</p>
-                                <input type="hidden" name="destinations[]" value="local">
-                            <?php else : ?>
-                                <label><input type="checkbox" name="destinations[]" value="local" checked> Lokal</label><br>
-                                <?php foreach ( $connected_storages as $storage ) : ?>
-                                    <label>
-                                        <input type="checkbox" name="destinations[]" value="<?php echo esc_attr( $storage ); ?>"> 
-                                        <?php echo esc_html( ucfirst( $storage ) ); ?>
-                                    </label><br>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </td>
-                    </tr>
-                </table>
-                
-                <p class="submit">
-                    <button type="submit" class="button button-primary">
-                        <span class="dashicons dashicons-plus"></span> Zeitplan hinzufügen
-                    </button>
-                </p>
-            </form>
+                    <table class="form-table">
+                        <tr>
+                            <th>Intervall</th>
+                            <td>
+                                <select name="interval">
+                                    <option value="hourly">Stündlich</option>
+                                    <option value="daily" selected>Täglich</option>
+                                    <option value="weekly">Wöchentlich</option>
+                                    <option value="monthly">Monatlich</option>
+                                </select>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Uhrzeit</th>
+                            <td>
+                                <input type="time" name="time" value="03:00">
+                                <p class="description">Gilt für tägliche/wöchentliche/monatliche Backups.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Backup-Typ</th>
+                            <td>
+                                <select name="type">
+                                    <option value="full">Vollständig (DB + Dateien)</option>
+                                    <option value="db_only">Nur Datenbank</option>
+                                    <option value="files_only">Nur Dateien</option>
+                                </select>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Speicherorte</th>
+                            <td>
+                                <?php if ( empty( $connected_storages ) ) : ?>
+                                    <p class="wprb-notice-warning">Keine externen Speicherorte verbunden. Backup wird lokal gespeichert.</p>
+                                    <input type="hidden" name="destinations[]" value="local">
+                                <?php else : ?>
+                                    <label><input type="checkbox" name="destinations[]" value="local" checked> Lokal</label><br>
+                                    <?php foreach ( $connected_storages as $storage ) : ?>
+                                        <label>
+                                            <input type="checkbox" name="destinations[]" value="<?php echo esc_attr( $storage ); ?>"> 
+                                            <?php echo esc_html( ucfirst( $storage ) ); ?>
+                                        </label><br>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                    </table>
+                    
+                    <p class="submit">
+                        <button type="submit" class="button button-primary" id="wprb-save-schedule-btn">
+                            <span class="dashicons dashicons-plus"></span> <span class="btn-text">Zeitplan hinzufügen</span>
+                        </button>
+                        <button type="button" class="button button-secondary" id="wprb-cancel-add-schedule" style="margin-left: 10px;">
+                            Abbrechen
+                        </button>
+                    </p>
+                </form>
+            </div>
         </div>
         <?php
     }

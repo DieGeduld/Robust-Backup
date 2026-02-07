@@ -674,6 +674,20 @@
         });
 
         // Schedules
+        function updateScheduleIntervalUI() {
+            var interval = $('#wprb-schedule-interval').val();
+            $('#wprb-weekly-options').hide();
+            $('#wprb-monthly-options').hide();
+            
+            if (interval === 'weekly') {
+                $('#wprb-weekly-options').show();
+            } else if (interval === 'monthly') {
+                $('#wprb-monthly-options').show();
+            }
+        }
+        
+        $(document).on('change', '#wprb-schedule-interval', updateScheduleIntervalUI);
+
         function resetScheduleForm() {
             $('#wprb-add-schedule-form')[0].reset();
             $('#wprb-schedule-id').val('');
@@ -681,6 +695,7 @@
             $('#wprb-save-schedule-btn .dashicons').removeClass('dashicons-saved').addClass('dashicons-plus');
             $('#wprb-save-schedule-btn .btn-text').text('Zeitplan hinzufügen');
             $('#wprb-add-schedule-wrapper h2').text('Neuen Zeitplan erstellen');
+            updateScheduleIntervalUI();
         }
 
         $(document).on('click', '#wprb-show-add-schedule', function (e) {
@@ -696,6 +711,8 @@
             var id = $(this).data('id');
             var interval = row.data('interval');
             var time = row.data('time');
+            var dayOfWeek = row.data('day-of-week');
+            var dayOfMonth = row.data('day-of-month');
             var type = row.data('type');
             var destinations = row.data('destinations'); // Already parsed by jQuery if properly encoded, else need JSON.parse
 
@@ -703,6 +720,8 @@
             $('#wprb-schedule-id').val(id);
             $('#wprb-add-schedule-form select[name="interval"]').val(interval);
             $('#wprb-add-schedule-form input[name="time"]').val(time);
+            $('#wprb-add-schedule-form select[name="day_of_week"]').val(dayOfWeek);
+            $('#wprb-add-schedule-form select[name="day_of_month"]').val(dayOfMonth);
             $('#wprb-add-schedule-form select[name="type"]').val(type);
             
             // Destinations
@@ -723,6 +742,8 @@
             $('#wprb-save-schedule-btn .btn-text').text('Änderungen speichern');
             $('#wprb-add-schedule-wrapper h2').text('Zeitplan bearbeiten');
             
+            updateScheduleIntervalUI();
+
             // Show Form
             $('#wprb-add-schedule-wrapper').slideDown(200);
             $('#wprb-show-add-schedule').prop('disabled', true);

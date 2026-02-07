@@ -109,8 +109,6 @@ class WPRB_Backup_Scheduler {
         $time = $data['time'] ?? '03:00';
         $interval = $data['interval'] ?? 'daily';
 
-        // Calculate first run
-        // Calculate first run using WP Timezone
         $parts    = explode( ':', $time );
         $hour     = (int) ( $parts[0] ?? 3 );
         $minute   = (int) ( $parts[1] ?? 0 );
@@ -120,8 +118,38 @@ class WPRB_Backup_Scheduler {
         $scheduled = new DateTime( 'now', $tz );
         $scheduled->setTime( $hour, $minute, 0 );
 
-        if ( $scheduled <= $now ) {
-            $scheduled->modify( '+1 day' );
+        if ( $interval === 'hourly' ) {
+            // run at x:MINUTE
+            $scheduled->setTime( $now->format('H'), $minute, 0 );
+            if ( $scheduled <= $now ) {
+                $scheduled->modify( '+1 hour' );
+            }
+        } elseif ( $interval === 'weekly' ) {
+            $dow = (int) ( $data['day_of_week'] ?? 1 ); // 1 (Mon) - 7 (Sun)
+            $current_dow = (int) $scheduled->format('N');
+            
+            $diff = $dow - $current_dow;
+            if ( $diff < 0 ) {
+                $diff += 7;
+            } elseif ( $diff === 0 && $scheduled <= $now ) {
+                $diff += 7;
+            }
+            
+            $scheduled->modify( "+$diff days" );
+        } elseif ( $interval === 'monthly' ) {
+            $dom = (int) ( $data['day_of_month'] ?? 1 );
+            $scheduled->setDate( $scheduled->format('Y'), $scheduled->format('m'), $dom );
+            
+            if ( $scheduled <= $now ) {
+                $scheduled->modify( '+1 month' );
+                // Ensure correct day (e.g. if we jumped to Feb, and target was 30th -> invalid, but we limit to 28 so safe)
+                $scheduled->setDate( $scheduled->format('Y'), $scheduled->format('m'), $dom );
+            }
+        } else {
+            // Daily
+            if ( $scheduled <= $now ) {
+                $scheduled->modify( '+1 day' );
+            }
         }
 
         $next_run = $scheduled->getTimestamp();

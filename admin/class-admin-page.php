@@ -600,12 +600,21 @@ class WPRB_Admin_Page {
                                 data-id="<?php echo esc_attr( $id ); ?>"
                                 data-interval="<?php echo esc_attr( $sched['interval'] ); ?>"
                                 data-time="<?php echo esc_attr( $sched['time'] ); ?>"
+                                data-day-of-week="<?php echo esc_attr( $sched['day_of_week'] ?? 1 ); ?>"
+                                data-day-of-month="<?php echo esc_attr( $sched['day_of_month'] ?? 1 ); ?>"
                                 data-type="<?php echo esc_attr( $sched['type'] ); ?>"
                                 data-destinations='<?php echo json_encode( $sched['destinations'] ?? [] ); ?>'>
                                 <td>
                                     <?php
                                     $labels = [ 'hourly' => 'Stündlich', 'daily' => 'Täglich', 'weekly' => 'Wöchentlich', 'monthly' => 'Monatlich' ];
                                     echo esc_html( $labels[ $sched['interval'] ] ?? $sched['interval'] );
+                                    
+                                    if ( $sched['interval'] === 'weekly' ) {
+                                        $days = [ 1 => 'Mo', 2 => 'Di', 3 => 'Mi', 4 => 'Do', 5 => 'Fr', 6 => 'Sa', 7 => 'So' ];
+                                        echo ' (' . ( $days[ $sched['day_of_week'] ?? 1 ] ?? 'Mo' ) . ')';
+                                    } elseif ( $sched['interval'] === 'monthly' ) {
+                                        echo ' (' . ( $sched['day_of_month'] ?? 1 ) . '.)';
+                                    }
                                     ?>
                                 </td>
                                 <td><?php echo esc_html( $sched['time'] ); ?></td>
@@ -655,12 +664,37 @@ class WPRB_Admin_Page {
                         <tr>
                             <th>Intervall</th>
                             <td>
-                                <select name="interval">
+                                <select name="interval" id="wprb-schedule-interval">
                                     <option value="hourly">Stündlich</option>
                                     <option value="daily" selected>Täglich</option>
                                     <option value="weekly">Wöchentlich</option>
                                     <option value="monthly">Monatlich</option>
                                 </select>
+                            </td>
+                        </tr>
+                        <tr id="wprb-weekly-options" style="display:none;">
+                            <th>Wochentag</th>
+                            <td>
+                                <select name="day_of_week">
+                                    <option value="1">Montag</option>
+                                    <option value="2">Dienstag</option>
+                                    <option value="3">Mittwoch</option>
+                                    <option value="4">Donnerstag</option>
+                                    <option value="5">Freitag</option>
+                                    <option value="6">Samstag</option>
+                                    <option value="7">Sonntag</option>
+                                </select>
+                            </td>
+                        </tr>
+                        <tr id="wprb-monthly-options" style="display:none;">
+                            <th>Tag des Monats</th>
+                            <td>
+                                <select name="day_of_month">
+                                    <?php for($i=1; $i<=28; $i++): ?>
+                                        <option value="<?php echo $i; ?>"><?php echo $i; ?>.</option>
+                                    <?php endfor; ?>
+                                </select>
+                                <p class="description">Hinweis: Nur Tage 1-28 verfügbar, um Probleme in kurzen Monaten zu vermeiden.</p>
                             </td>
                         </tr>
                         <tr>

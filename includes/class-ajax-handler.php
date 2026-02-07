@@ -221,6 +221,8 @@ class WPRB_Ajax_Handler {
         $data = [
             'interval'     => sanitize_text_field( $_POST['interval'] ?? 'daily' ),
             'time'         => sanitize_text_field( $_POST['time'] ?? '03:00' ),
+            'day_of_week'  => max( 1, min( 7, intval( $_POST['day_of_week'] ?? 1 ) ) ),
+            'day_of_month' => max( 1, min( 28, intval( $_POST['day_of_month'] ?? 1 ) ) ),
             'type'         => sanitize_text_field( $_POST['type'] ?? 'full' ),
             'destinations' => array_map( 'sanitize_text_field', (array) ( $_POST['destinations'] ?? [ 'local' ] ) ),
         ];
@@ -253,6 +255,8 @@ class WPRB_Ajax_Handler {
         $data = [
             'interval'     => sanitize_text_field( $_POST['interval'] ?? 'daily' ),
             'time'         => sanitize_text_field( $_POST['time'] ?? '03:00' ),
+            'day_of_week'  => max( 1, min( 7, intval( $_POST['day_of_week'] ?? 1 ) ) ),
+            'day_of_month' => max( 1, min( 28, intval( $_POST['day_of_month'] ?? 1 ) ) ),
             'type'         => sanitize_text_field( $_POST['type'] ?? 'full' ),
             'destinations' => array_map( 'sanitize_text_field', (array) ( $_POST['destinations'] ?? [ 'local' ] ) ),
         ];

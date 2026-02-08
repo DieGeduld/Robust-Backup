@@ -71,6 +71,17 @@
     function startBackup(type) {
         if (isRunning) return;
 
+        // Collect destinations
+        const destinations = [];
+        $('input[name="backup_dest[]"]:checked').each(function() {
+            destinations.push($(this).val());
+        });
+
+        if (destinations.length === 0) {
+            alert('Bitte wähle mindestens ein Speicherziel aus.');
+            return;
+        }
+
         isRunning = true;
         startTime = Date.now();
 
@@ -80,7 +91,7 @@
         $('#wprb-progress-section').slideDown(200);
         updateProgress({ progress: 0, phase: 'init', message: data.strings.backupStarted });
 
-        ajax('wprb_start_backup', { type: type })
+        ajax('wprb_start_backup', { type: type, destinations: destinations })
             .done(function (response) {
                 if (response.success) {
                     processNext();

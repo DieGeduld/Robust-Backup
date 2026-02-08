@@ -43,7 +43,7 @@ class WPRB_Backup_Engine {
      * @param string $type 'full', 'db_only', 'files_only'
      * @return array Initial state.
      */
-    public function start( $type = 'full' ) {
+    public function start( $type = 'full', $storage_override = [] ) {
         // Check if another backup is running
         $existing = get_option( $this->state_key() );
         if ( $existing && $existing['phase'] !== self::PHASE_DONE ) {
@@ -57,14 +57,15 @@ class WPRB_Backup_Engine {
         wp_mkdir_p( WPRB_BACKUP_DIR . $backup_id );
 
         $state = [
-            'backup_id'  => $backup_id,
-            'type'       => $type,
-            'phase'      => self::PHASE_INIT,
-            'progress'   => 0,
-            'message'    => 'Backup wird vorbereitet...',
-            'started_at' => time(),
-            'errors'     => [],
-            'all_files'  => [],
+            'backup_id'        => $backup_id,
+            'type'             => $type,
+            'phase'            => self::PHASE_INIT,
+            'progress'         => 0,
+            'message'          => 'Backup wird vorbereitet...',
+            'started_at'       => time(),
+            'errors'           => [],
+            'all_files'        => [],
+            'storage_override' => $storage_override,
         ];
 
         update_option( $this->state_key(), $state, false );
@@ -227,7 +228,8 @@ class WPRB_Backup_Engine {
                     );
                 }
 
-                $dist_result = $this->storage->process_upload_step( $backup_id, $state['all_files'], $state['upload_state'] ?? [] );
+                $storage_override = ! empty( $state['storage_override'] ) ? $state['storage_override'] : null;
+                $dist_result = $this->storage->process_upload_step( $backup_id, $state['all_files'], $state['upload_state'] ?? [], $storage_override );
                 
                 $state['upload_state'] = $dist_result['state'];
                 
@@ -253,7 +255,7 @@ class WPRB_Backup_Engine {
                     }
 
                     // cleanup
-                    $active_storage = (array) get_option( 'wprb_storage', [ 'local' ] );
+                    $active_storage = ! empty( $state['storage_override'] ) ? $state['storage_override'] : (array) get_option( 'wprb_storage', [ 'local' ] );
                     if ( ! in_array( 'local', $active_storage ) && ! $upload_errors ) {
                         $remote_success = false;
                         foreach ( $results as $res ) {

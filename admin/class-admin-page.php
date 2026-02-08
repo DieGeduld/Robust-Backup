@@ -232,6 +232,27 @@ class WPRB_Admin_Page {
                 <h2>Backup starten</h2>
                 <p>Wähle den Backup-Typ und starte den Vorgang. Das Backup läuft im Hintergrund in kleinen Schritten – ohne Timeout-Probleme.</p>
 
+                <div class="wprb-backup-options" style="margin-bottom: 20px; padding: 10px; background: #fff; border: 1px solid #ccd0d4; border-radius: 4px;">
+                    <strong style="display: block; margin-bottom: 10px;">Zielort:</strong>
+                    <label style="margin-right: 15px;">
+                        <input type="checkbox" name="backup_dest[]" value="local" checked> 
+                        <span class="dashicons dashicons-desktop" style="color: #646970; font-size: 16px; width: 16px; height: 16px; vertical-align: middle;"></span> Lokal
+                    </label>
+                    <?php
+                    $connected = $this->get_connected_storages();
+                    if ( ! empty( $connected ) ) :
+                        foreach ( $connected as $storage ) :
+                            ?>
+                            <label style="margin-right: 15px;">
+                                <input type="checkbox" name="backup_dest[]" value="<?php echo esc_attr( $storage ); ?>"> 
+                                <span class="dashicons dashicons-cloud" style="color: #646970; font-size: 16px; width: 16px; height: 16px; vertical-align: middle;"></span> <?php echo esc_html( ucfirst( $storage ) ); ?>
+                            </label>
+                            <?php
+                        endforeach;
+                    endif;
+                    ?>
+                </div>
+
                 <div class="wprb-backup-actions">
                     <button class="button button-primary button-hero wprb-start-backup" data-type="full">
                         <span class="dashicons dashicons-database-export"></span>

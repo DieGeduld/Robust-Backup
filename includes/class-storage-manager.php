@@ -24,8 +24,8 @@ class WPRB_Storage_Manager {
      * @param array $state Current upload state
      * @return array New state and result
      */
-    public function process_upload_step( $backup_id, $files, $state ) {
-        $storages = (array) get_option( 'wprb_storage', [ 'local' ] );
+    public function process_upload_step( $backup_id, $files, $state, $storage_override = null ) {
+        $storages = ! empty( $storage_override ) ? $storage_override : (array) get_option( 'wprb_storage', [ 'local' ] );
         
         // Initialize state if empty
         if ( empty( $state ) ) {

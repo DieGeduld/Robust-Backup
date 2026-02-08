@@ -58,9 +58,13 @@ class WPRB_Ajax_Handler {
     public function start_backup() {
         $this->verify();
 
-        $type   = sanitize_text_field( $_POST['type'] ?? 'full' );
+        $type         = sanitize_text_field( $_POST['type'] ?? 'full' );
+        $destinations = isset( $_POST['destinations'] ) && is_array( $_POST['destinations'] ) 
+                        ? array_map( 'sanitize_text_field', $_POST['destinations'] ) 
+                        : [];
+
         $engine = new WPRB_Backup_Engine();
-        $result = $engine->start( $type );
+        $result = $engine->start( $type, $destinations );
 
         if ( isset( $result['error'] ) && $result['error'] === true ) {
             wp_send_json_error( $result );

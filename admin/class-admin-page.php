@@ -470,7 +470,7 @@ class WPRB_Admin_Page {
                                         $label = $labels[ $st ] ?? ucfirst( $st );
                                         
                                         printf( 
-                                            '<span class="dashicons %s" title="%s" style="margin-right: 6px; color: #50575e; cursor: help;"></span>', 
+                                            '<span class="dashicons %s" title="%s" style="margin-right: 6px; color: #50575e;"></span>', 
                                             esc_attr( $icon ), 
                                             esc_attr( $label ) 
                                         );

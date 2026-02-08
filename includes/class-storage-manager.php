@@ -1331,6 +1331,12 @@ class WPRB_Storage_Manager {
                 }
             }
 
+            $storages = $meta['storages'] ?? [];
+            if ( empty( $storages ) ) {
+                 // Fallback for old backups
+                 $storages = $is_local_deleted ? ['cloud'] : ['local'];
+            }
+
             $backups[] = [
                 'id'            => $backup_id,
                 'date'          => $meta['date'] ?? wp_date( 'Y-m-d H:i:s', filemtime( $dir ) ),
@@ -1340,7 +1346,8 @@ class WPRB_Storage_Manager {
                 'files'         => $file_info,
                 'file_count'    => count( $file_info ),
                 'local_deleted' => $is_local_deleted,
-                'location'      => $is_local_deleted ? 'Cloud' : 'Lokal',
+                'location'      => $is_local_deleted ? 'Cloud' : 'Lokal', // Deprecated but kept for compat
+                'storages'      => $storages,
             ];
         }
 

@@ -212,6 +212,8 @@ class WPRB_Backup_Engine {
                         $total_size += $s;
                     }
 
+                    $active_storage = ! empty( $state['storage_override'] ) ? $state['storage_override'] : (array) get_option( 'wprb_storage', [ 'local' ] );
+
                     $meta = [
                         'date'         => wp_date( 'Y-m-d H:i:s' ),
                         'type'         => $type,
@@ -221,6 +223,7 @@ class WPRB_Backup_Engine {
                         'file_details' => $files_with_info,
                         'total_size'   => $total_size,
                         'cloud_only'   => false,
+                        'storages'     => $active_storage,
                     ];
                     file_put_contents(
                         WPRB_BACKUP_DIR . $backup_id . '/backup-meta.json',

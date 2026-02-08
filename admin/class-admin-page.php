@@ -414,11 +414,46 @@ class WPRB_Admin_Page {
                                 </td>
                                 <td><?php echo esc_html( $backup['size'] ); ?></td>
                                 <td>
-                                    <?php if ( $backup['location'] === 'Cloud' ) : ?>
-                                        <span class="dashicons dashicons-cloud" title="Nur in der Cloud"></span> Cloud
-                                    <?php else : ?>
-                                        <span class="dashicons dashicons-desktop" title="Lokal vorhanden"></span> Lokal
-                                    <?php endif; ?>
+                                    <?php 
+                                    $storages = $backup['storages'] ?? [];
+                                    if ( empty( $storages ) ) { 
+                                         $storages = ( $backup['location'] === 'Cloud' ) ? ['cloud'] : ['local'];
+                                    }
+                                    
+                                    $labels = [
+                                        'local'   => 'Lokal',
+                                        'dropbox' => 'Dropbox',
+                                        'gdrive'  => 'Google Drive',
+                                        'sftp'    => 'SFTP',
+                                        's3'      => 'S3',
+                                        'cloud'   => 'Cloud',
+                                    ];
+                                    
+                                    $icons = [
+                                        'local'   => 'dashicons-desktop',
+                                        'dropbox' => 'dashicons-dropbox', 
+                                        'gdrive'  => 'dashicons-google',
+                                        'sftp'    => 'dashicons-admin-network',
+                                        's3'      => 'dashicons-amazon',
+                                        'cloud'   => 'dashicons-cloud',
+                                    ];
+
+                                    foreach ( $storages as $st ) {
+                                        // Skip local if deleted
+                                        if ( $st === 'local' && ! empty( $backup['local_deleted'] ) ) {
+                                           continue; 
+                                        }
+
+                                        $icon = $icons[ $st ] ?? 'dashicons-cloud';
+                                        $label = $labels[ $st ] ?? ucfirst( $st );
+                                        
+                                        printf( 
+                                            '<span class="dashicons %s" title="%s" style="margin-right: 6px; color: #50575e; cursor: help;"></span>', 
+                                            esc_attr( $icon ), 
+                                            esc_attr( $label ) 
+                                        );
+                                    }
+                                    ?>
                                 </td>
                                 <td>
                                     <?php foreach ( $backup['files'] as $file ) : ?>

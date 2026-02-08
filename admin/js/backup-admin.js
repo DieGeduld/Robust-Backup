@@ -884,17 +884,7 @@
             saveSettings(this);
         });
 
-        // Storage Checkbox Toggle
-        $(document).on('change', '.wprb-storage-checkbox', function() {
-            const target = $(this).data('target');
-            if (target) {
-                if ($(this).is(':checked')) {
-                    $(target).slideDown(200);
-                } else {
-                    $(target).slideUp(200);
-                }
-            }
-        });
+
 
         // Selective Restore: Modal
         $(document).on('click', '#wprb-restore-files-select-btn', function (e) {

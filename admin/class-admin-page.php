@@ -927,38 +927,11 @@ class WPRB_Admin_Page {
             <form id="wprb-storage-settings-form">
                 <input type="hidden" name="tab" value="storage">
 
-                <!-- Storage Selection -->
-                <table class="form-table">
-                    <tr>
-                        <th>Aktive Speicherorte</th>
-                        <td>
-                            <?php
-                            $storage_opts = [
-                                'local'   => 'Lokal auf dem Server',
-                                'dropbox' => 'Dropbox',
-                                'gdrive'  => 'Google Drive',
-                                'sftp'    => 'SFTP / FTP',
-                                's3'      => 'AWS S3 (oder kompatibel)',
-                            ];
-                            foreach ( $storage_opts as $key => $label ) {
-                                printf(
-                                    '<label><input type="checkbox" name="storage[]" value="%s" %s class="wprb-storage-checkbox" data-target="#wprb-%s-settings"> %s</label><br>',
-                                    esc_attr( $key ),
-                                    checked( in_array( $key, $active_storage ), true, false ),
-                                    esc_attr( $key ),
-                                    esc_html( $label )
-                                );
-                            }
-                            ?>
-                            <p class="description">Wähle, wohin Backups gespeichert werden sollen. Mehrfachauswahl möglich.</p>
-                        </td>
-                    </tr>
-                </table>
-
+                <p>Konfiguriere hier deine externen Speicherorte. Sobald sie verbunden sind, kannst du sie beim Backup auswählen.</p>
                 <hr style="margin: 20px 0; border: none; border-bottom: 1px solid #f0f0f1;">
 
                 <!-- Dropbox Settings -->
-                <div id="wprb-dropbox-settings" style="display: <?php echo in_array('dropbox', $active_storage) ? 'block' : 'none'; ?>;">
+                <div id="wprb-dropbox-settings">
                     <h3><span class="dashicons dashicons-dropbox"></span> Dropbox Konfiguration</h3>
                     <p class="description" style="margin-bottom: 15px;">
                         Erstelle eine App in der <a href="https://www.dropbox.com/developers/apps" target="_blank">Dropbox App Console</a>,<br>
@@ -1001,7 +974,7 @@ class WPRB_Admin_Page {
                 </div>
 
                 <!-- Google Drive Settings -->
-                <div id="wprb-gdrive-settings" style="display: <?php echo in_array('gdrive', $active_storage) ? 'block' : 'none'; ?>;">
+                <div id="wprb-gdrive-settings">
                     <h3><span class="dashicons dashicons-google"></span> Google Drive Konfiguration</h3>
                     <p class="description" style="margin-bottom: 15px;">
                         Erstelle Credentials in der <a href="https://console.cloud.google.com/" target="_blank">Google Cloud Console</a>.<br>
@@ -1043,7 +1016,7 @@ class WPRB_Admin_Page {
                 </div>
 
                 <!-- SFTP Settings -->
-                <div id="wprb-sftp-settings" style="display: <?php echo in_array('sftp', $active_storage) ? 'block' : 'none'; ?>;">
+                <div id="wprb-sftp-settings">
                     <h3><span class="dashicons dashicons-admin-network"></span> SFTP / FTP Konfiguration</h3>
                     <table class="form-table">
                         <tr>
@@ -1085,7 +1058,7 @@ class WPRB_Admin_Page {
                 </div>
 
                 <!-- S3 Settings -->
-                <div id="wprb-s3-settings" style="display: <?php echo in_array('s3', $active_storage) ? 'block' : 'none'; ?>;">
+                <div id="wprb-s3-settings">
                     <h3><span class="dashicons dashicons-cloud-upload"></span> S3 Compatible Storage</h3>
                     <table class="form-table">
                         <tr>

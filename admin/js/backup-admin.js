@@ -604,23 +604,126 @@
     
     function renderFileList(files) {
         allBackupFiles = files; // Cache
-        let html = '';
         
         if (!files || files.length === 0) {
-            html = '<p>Keine Dateien gefunden.</p>';
+            $('#wprb-file-tree').html('<p>Keine Dateien gefunden.</p>');
+            return;
         } else if (files.length > 20000) {
-            html = '<p class="wprb-notice-warning">Zu viele Dateien zum Anzeigen (' + files.length + '). Selektive Wiederherstellung nicht verfügbar.</p>';
-        } else {
-            // Check previously selected
-            const isAll = selectedBackupFiles === null;
-            
-            files.forEach(function(f) {
-                const checked = isAll || (selectedBackupFiles && selectedBackupFiles.includes(f)) ? 'checked' : '';
-                html += '<label class="wprb-file-item" style="display:block; padding: 2px 0;"><input type="checkbox" class="wprb-file-checkbox" value="' + f + '" ' + checked + '> <span style="font-family:monospace;">' + f + '</span></label>';
-            });
+             $('#wprb-file-tree').html('<p class="wprb-notice-warning">Zu viele Dateien zum Anzeigen (' + files.length + '). Selektive Wiederherstellung nicht verfügbar.</p>');
+             return;
         }
+
+        // Build Tree Object
+        const tree = {};
+        files.forEach(path => {
+            const parts = path.split('/');
+            let current = tree;
+            parts.forEach((part, index) => {
+                if (!current[part]) {
+                    current[part] = (index === parts.length - 1) ? null : {}; // null = file, {} = folder
+                }
+                current = current[part];
+            });
+        });
+
+        // Determine if everything should be checked initially
+        const isAll = selectedBackupFiles === null;
+
+        // Render Tree HTML
+        const html = '<ul class="wprb-tree-root" style="list-style: none; margin: 0; padding: 0;">' + 
+                     renderTreeNodes(tree, '', isAll) + 
+                     '</ul>';
         
         $('#wprb-file-tree').html(html);
+
+        // Bind events
+        bindTreeEvents();
+    }
+
+    function renderTreeNodes(node, prefix, isAll) {
+        let html = '';
+        // Sort: Folders first, then files
+        const keys = Object.keys(node).sort((a, b) => {
+            const aIsFolder = node[a] !== null;
+            const bIsFolder = node[b] !== null;
+            if (aIsFolder && !bIsFolder) return -1;
+            if (!aIsFolder && bIsFolder) return 1;
+            return a.localeCompare(b);
+        });
+
+        keys.forEach(key => {
+            const fullPath = prefix ? prefix + '/' + key : key;
+            const isFolder = node[key] !== null;
+            
+            // Check state
+            let checked = '';
+            if (!isFolder) {
+                // File check state
+                if (isAll || (selectedBackupFiles && selectedBackupFiles.includes(fullPath))) {
+                    checked = 'checked';
+                }
+            } else {
+                // Folder check state - logic: check if children would be checked?
+                // For simplified UI, if isAll, we check the folder visual checkbox too.
+                // If specific files are selected, we don't auto-check the folder unless we want to calculate complex states.
+                // Lets start with: Checked if isAll is true.
+                 if (isAll) {
+                    checked = 'checked';
+                }
+            }
+            
+            html += '<li class="' + (isFolder ? 'wprb-folder' : 'wprb-file') + '" style="margin: 0;">';
+            
+            if (isFolder) {
+                html += '<div class="wprb-tree-row" style="display:flex; align-items:center; padding: 2px 0;">';
+                html += '<span class="dashicons dashicons-arrow-right-alt2 wprb-toggle-folder" style="cursor: pointer; font-size: 16px; width: 16px; height: 16px; line-height: 16px; color: #a7aaad;"></span>';
+                html += '<input type="checkbox" class="wprb-folder-checkbox" data-path="' + fullPath + '" ' + checked + ' style="margin: 0 6px 0 2px;">';
+                html += '<span class="dashicons dashicons-category" style="font-size: 18px; width: 18px; height: 18px; line-height: 18px; color: #8c8f94; margin-right: 4px;"></span> ';
+                html += '<span class="wprb-folder-name" style="cursor: pointer; font-weight: 500;">' + key + '</span>';
+                html += '</div>';
+                html += '<ul class="wprb-tree-children" style="display: none; padding-left: 24px; list-style: none; margin: 0;">';
+                html += renderTreeNodes(node[key], fullPath, isAll);
+                html += '</ul>';
+            } else {
+                html += '<div class="wprb-tree-row" style="display:flex; align-items:center; padding: 2px 0;">';
+                html += '<span style="display:inline-block; width: 16px;"></span>'; // Spacer for arrow
+                html += '<input type="checkbox" class="wprb-file-checkbox" value="' + fullPath + '" ' + checked + ' style="margin: 0 6px 0 2px;">';
+                html += '<span class="dashicons dashicons-media-default" style="font-size: 16px; width: 16px; height: 16px; line-height: 16px; color: #8c8f94; margin-right: 4px;"></span> ';
+                html += '<span class="wprb-file-name" style="font-family: monospace; font-size: 12px;">' + key + '</span>';
+                html += '</div>';
+            }
+            
+            html += '</li>';
+        });
+        return html;
+    }
+
+    function bindTreeEvents() {
+        // Toggle Folder
+        $('.wprb-toggle-folder, .wprb-folder-name').off('click').on('click', function(e) {
+            e.stopPropagation();
+            const $li = $(this).closest('li');
+            const $children = $li.children('.wprb-tree-children');
+            const $icon = $li.find('.wprb-toggle-folder').first();
+            
+            // Toggle visibility
+            if ($children.is(':visible')) {
+                $children.slideUp(150);
+                $icon.removeClass('dashicons-arrow-down-alt2').addClass('dashicons-arrow-right-alt2');
+            } else {
+                $children.slideDown(150);
+                $icon.removeClass('dashicons-arrow-right-alt2').addClass('dashicons-arrow-down-alt2');
+            }
+        });
+
+        // Folder Checkbox: Select/Deselect all children (recursive in DOM)
+        $('.wprb-folder-checkbox').off('change').on('change', function() {
+            const checked = $(this).is(':checked');
+            const $li = $(this).closest('li');
+            
+            // Look for both file checkboxes and folder checkboxes inside this container
+            $li.find('input[type="checkbox"]').prop('checked', checked);
+        });
     }
 
     function saveFileSelection() {

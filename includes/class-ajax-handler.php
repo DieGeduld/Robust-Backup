@@ -29,6 +29,7 @@ class WPRB_Ajax_Handler {
 
         // Restore operations
         add_action( 'wp_ajax_wprb_analyze_backup', [ $this, 'analyze_backup' ] );
+        add_action( 'wp_ajax_wprb_get_backup_files', [ $this, 'get_backup_files' ] );
         add_action( 'wp_ajax_wprb_start_restore', [ $this, 'start_restore' ] );
         add_action( 'wp_ajax_wprb_process_restore', [ $this, 'process_restore' ] );
         add_action( 'wp_ajax_wprb_cancel_restore', [ $this, 'cancel_restore' ] );
@@ -346,6 +347,23 @@ class WPRB_Ajax_Handler {
     }
 
     /**
+     * Get file list for a backup (selective restore).
+     */
+    public function get_backup_files() {
+        $this->verify();
+
+        $backup_id = sanitize_file_name( $_POST['backup_id'] ?? '' );
+        if ( empty( $backup_id ) ) {
+            wp_send_json_error( [ 'message' => 'Keine Backup-ID.' ] );
+        }
+
+        $engine = new WPRB_Restore_Engine();
+        $files  = $engine->get_file_list( $backup_id );
+
+        wp_send_json_success( [ 'files' => $files ] );
+    }
+
+    /**
      * Start restore process.
      */
     public function start_restore() {
@@ -355,6 +373,9 @@ class WPRB_Ajax_Handler {
         $restore_db      = ! empty( $_POST['restore_db'] );
         $restore_files   = ! empty( $_POST['restore_files'] );
         $create_snapshot = ! empty( $_POST['create_snapshot'] );
+        $selected_files  = isset($_POST['selected_files']) && is_array($_POST['selected_files']) 
+                           ? array_map('sanitize_text_field', $_POST['selected_files']) 
+                           : [];
 
         if ( empty( $backup_id ) ) {
             wp_send_json_error( [ 'message' => 'Keine Backup-ID angegeben.' ] );
@@ -365,7 +386,7 @@ class WPRB_Ajax_Handler {
         }
 
         $engine = new WPRB_Restore_Engine();
-        $result = $engine->start( $backup_id, $restore_db, $restore_files, $create_snapshot );
+        $result = $engine->start( $backup_id, $restore_db, $restore_files, $create_snapshot, $selected_files );
 
         if ( isset( $result['error'] ) && $result['error'] ) {
             wp_send_json_error( $result );

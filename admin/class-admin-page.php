@@ -505,6 +505,8 @@ class WPRB_Admin_Page {
                             <input type="checkbox" id="wprb-restore-files" checked>
                             <span class="dashicons dashicons-media-archive"></span>
                             <span>Dateien</span>
+                            <button type="button" class="button button-small" id="wprb-restore-files-select-btn" style="margin-left: 10px; display: none;">Auswählen</button>
+                            <span id="wprb-restore-files-note" class="wprb-muted" style="margin-left: 10px; display: none; font-size: 12px;"></span>
                         </label>
                         <label class="wprb-checkbox-card">
                             <input type="checkbox" id="wprb-restore-snapshot" checked>
@@ -558,6 +560,39 @@ class WPRB_Admin_Page {
                     </button>
                 </div>
 
+                <!-- File Selection Modal -->
+                <div id="wprb-file-selection-modal" class="wprb-modal" style="display: none;">
+                    <div class="wprb-modal-content" style="display: flex; flex-direction: column; height: 100%;">
+                        <div class="wprb-modal-header">
+                            <h3>Dateien auswählen</h3>
+                            <span class="wprb-modal-close" style="cursor: pointer; font-size: 24px;">&times;</span>
+                        </div>
+                        <div class="wprb-modal-body">
+                            <p>Wähle die Dateien oder Ordner aus, die wiederhergestellt werden sollen. Wenn nichts ausgewählt ist, werden alle Dateien wiederhergestellt.</p>
+                            <input type="text" id="wprb-file-search" placeholder="Dateien suchen..." style="width: 100%; margin-bottom: 10px;">
+                            <div id="wprb-file-tree" class="wprb-file-tree">
+                                <p class="wprb-muted">Lade Dateiliste...</p>
+                            </div>
+                        </div>
+                        <div class="wprb-modal-footer">
+                            <span id="wprb-file-selection-count" class="wprb-muted" style="float: left; line-height: 30px;">Alle Dateien (Standard)</span>
+                            <button type="button" class="button" id="wprb-file-modal-cancel">Abbrechen</button>
+                            <button type="button" class="button button-primary" id="wprb-file-modal-save">Auswahl bestätigen</button>
+                        </div>
+                    </div>
+                </div>
+                <div id="wprb-modal-backdrop" class="wprb-modal-backdrop" style="display: none;"></div>
+
+                <style>
+                    .wprb-modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 10000; }
+                    .wprb-modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 600px; max-width: 90%; background: #fff; z-index: 10001; box-shadow: 0 5px 15px rgba(0,0,0,0.3); border-radius: 4px; height: 80vh; max-height: 80vh; }
+                    .wprb-modal-header { padding: 15px 20px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; height: 50px; flex-shrink: 0; box-sizing: border-box; }
+                    .wprb-modal-header h3 { margin: 0; }
+                    .wprb-modal-body { padding: 20px; overflow-y: auto; flex: 1; }
+                    .wprb-modal-footer { padding: 15px 20px; border-top: 1px solid #eee; text-align: right; height: 60px; flex-shrink: 0; box-sizing: border-box; background: #fff; border-bottom-left-radius: 4px; border-bottom-right-radius: 4px;}
+                    .wprb-file-tree { border: 1px solid #ddd; padding: 10px; height: calc(100% - 80px); overflow-y: auto; background: #fafafa; }
+                    .wprb-file-item { margin: 2px 0; display: block; }
+                </style>
             <?php endif; ?>
         </div>
         <?php

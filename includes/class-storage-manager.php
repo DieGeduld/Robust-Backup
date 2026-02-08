@@ -84,6 +84,10 @@ class WPRB_Storage_Manager {
                 case 'gdrive':
                     $result = $this->store_gdrive_step( $backup_id, $files, $state, $execution_start_time, $time_limit );
                     break;
+
+                case 'sftp':
+                    $result = $this->store_sftp_step( $backup_id, $files, $state, $execution_start_time, $time_limit );
+                    break;
             }
 
             if ( $result && $result['done'] ) {
@@ -1422,6 +1426,77 @@ class WPRB_Storage_Manager {
         foreach ( $to_delete as $backup ) {
             $this->delete_backup( $backup['id'] );
             $this->storage_log( 'Retention: Altes Backup gelöscht: ' . $backup['id'] );
+        }
+    }
+
+    /**
+     * Store files to SFTP / FTP.
+     */
+    private function store_sftp_step( $backup_id, $files, &$state, $execution_start_time, $time_limit ) {
+        // Init State
+        if ( ! isset( $state['sftp_file_index'] ) ) $state['sftp_file_index'] = 0;
+
+        $host  = get_option( 'wprb_sftp_host' );
+        $user  = get_option( 'wprb_sftp_user' );
+        $port  = (int) get_option( 'wprb_sftp_port', 22 );
+        $pass  = get_option( 'wprb_sftp_pass' );
+        $path  = get_option( 'wprb_sftp_path', '/' );
+        $proto = get_option( 'wprb_sftp_proto', 'sftp' ); // sftp or ftp
+
+        if ( empty( $host ) || empty( $user ) ) {
+            $state['results']['sftp'] = [ 'success' => false, 'message' => 'SFTP nicht konfiguriert.' ];
+            return [ 'done' => true ];
+        }
+
+        try {
+            if ( ! class_exists( 'WPRB_SFTP_Helper' ) ) {
+                require_once dirname( __FILE__ ) . '/class-sftp-helper.php';
+            }
+            
+            // Connect
+             $sftp = new WPRB_SFTP_Helper( $host, $port, $user, $pass, $proto );
+
+            // Create target folder structure (Remote)
+            $target_base = rtrim( $path, '/' ) . '/' . $this->get_storage_folder_name() . '/' . $backup_id;
+            // First time: Create directory
+            if ( $state['sftp_file_index'] === 0 ) {
+                 if ( ! $sftp->mkdir( $target_base ) ) {
+                     // Try to ignore error if exists? Helper mkdir handles it gracefully?
+                 }
+            }
+
+            $current_index = $state['sftp_file_index'];
+            
+            while ( $current_index < count( $files ) ) {
+                if ( time() - $execution_start_time > $time_limit ) {
+                    $sftp->close();
+                    $state['sftp_file_index'] = $current_index;
+                    $current_file = basename( $files[ $current_index ] );
+                    return [ 'done' => false, 'message' => "SFTP Upload: $current_file läuft..." ];
+                }
+                
+                $file = $files[ $current_index ];
+                if ( file_exists( $file ) ) {
+                    $remote_file = $target_base . '/' . basename( $file );
+                    if ( ! $sftp->upload( $file, $remote_file ) ) {
+                         $this->storage_log( "SFTP Error uploading: " . basename( $file ) );
+                         // Fail or continue?
+                    } else {
+                        $this->storage_log( "SFTP Upload OK: " . basename( $file ) );
+                    }
+                }
+                
+                $current_index++;
+            }
+            
+            $sftp->close();
+            
+            $state['results']['sftp'] = [ 'success' => true, 'message' => 'Upload zu SFTP abgeschlossen.' ];
+            return [ 'done' => true ];
+
+        } catch ( Exception $e ) {
+            $state['results']['sftp'] = [ 'success' => false, 'message' => 'SFTP Fehler: ' . $e->getMessage() ];
+            return [ 'done' => true ];
         }
     }
 }

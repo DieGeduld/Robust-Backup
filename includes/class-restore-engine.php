@@ -84,9 +84,42 @@ class WPRB_Restore_Engine {
     }
 
     /**
+     * Get list of files in the backup archives.
+     */
+    public function get_file_list( $backup_id ) {
+        $backup_dir = WPRB_BACKUP_DIR . sanitize_file_name( $backup_id ) . '/';
+        $archives   = glob( $backup_dir . 'files-part*' );
+        $files      = [];
+
+        foreach ( $archives as $archive ) {
+            $ext = pathinfo( $archive, PATHINFO_EXTENSION );
+            if ( $ext === 'zip' && class_exists( 'ZipArchive' ) ) {
+                $zip = new ZipArchive();
+                if ( $zip->open( $archive ) === true ) {
+                    for ( $i = 0; $i < $zip->numFiles; $i++ ) {
+                         $name = $zip->getNameIndex( $i );
+                         // Skip directories if empty, but useful for tree
+                         $files[] = $name;
+                    }
+                    $zip->close();
+                }
+            } elseif ( ( $ext === 'gz' || $this->is_tar_gz( $archive ) ) && function_exists( 'shell_exec' ) ) {
+                $output = shell_exec( 'tar -tf ' . escapeshellarg( $archive ) );
+                if ( $output ) {
+                    $lines = explode( "\n", trim( $output ) );
+                    foreach ( $lines as $line ) {
+                        if ( ! empty( $line ) ) $files[] = $line;
+                    }
+                }
+            }
+        }
+        return array_values( array_unique( $files ) );
+    }
+
+    /**
      * Start restore process.
      */
-    public function start( $backup_id, $restore_db = true, $restore_files = true, $create_snapshot = true ) {
+    public function start( $backup_id, $restore_db = true, $restore_files = true, $create_snapshot = true, $selected_files = [] ) {
         // Check if restore is already running
         $existing = get_option( $this->state_key() );
         if ( $existing && $existing['phase'] !== self::PHASE_DONE ) {
@@ -137,6 +170,7 @@ class WPRB_Restore_Engine {
             'restore_db'      => $restore_db,
             'restore_files'   => $restore_files,
             'create_snapshot' => $create_snapshot,
+            'selected_files'  => $selected_files, // Selective Restore
             'progress'        => 0,
             'message'         => $message,
             'started_at'      => time(),
@@ -158,7 +192,7 @@ class WPRB_Restore_Engine {
         ];
 
         update_option( $this->state_key(), $state, false );
-        $this->log( 'Wiederherstellung gestartet: ' . $backup_id );
+        $this->log( 'Wiederherstellung gestartet: ' . $backup_id . ( ! empty($selected_files) ? ' (Selektiv)' : '' ) );
 
         return $state;
     }
@@ -442,10 +476,14 @@ class WPRB_Restore_Engine {
     /**
      * Restore files from archives.
      */
+    /**
+     * Restore files from archives.
+     */
     private function process_file_restore( &$state ) {
         $backup_dir      = $state['backup_dir'];
         $archives        = $state['archives'];
         $current_idx     = $state['current_archive'];
+        $selected_files  = $state['selected_files'] ?? [];
 
         if ( $current_idx >= count( $archives ) ) {
             $state['phase']    = self::PHASE_DONE;
@@ -469,9 +507,9 @@ class WPRB_Restore_Engine {
         $ext = pathinfo( $archive_file, PATHINFO_EXTENSION );
 
         if ( $ext === 'gz' || $this->is_tar_gz( $archive_file ) ) {
-            $result = $this->extract_tar_gz( $archive_file, ABSPATH );
+            $result = $this->extract_tar_gz( $archive_file, ABSPATH, $selected_files );
         } elseif ( $ext === 'zip' ) {
-            $result = $this->extract_zip( $archive_file, ABSPATH );
+            $result = $this->extract_zip( $archive_file, ABSPATH, $selected_files );
         } else {
             $result = [ 'error' => 'Unbekanntes Archiv-Format: ' . $ext ];
         }
@@ -495,12 +533,13 @@ class WPRB_Restore_Engine {
             $state['progress'] = 5 + ( $file_progress * 90 );
         }
 
+        $msg_extra = ! empty( $selected_files ) ? ' (Selektiv)' : '';
         $state['message'] = sprintf(
-            'Dateien: Archiv %d/%d (%s) – %s Dateien extrahiert',
+            'Dateien%s: Archiv %d/%d (%s)',
+            $msg_extra,
             $state['current_archive'],
             count( $archives ),
-            $archive_name,
-            number_format_i18n( $state['files_extracted'] )
+            $archive_name
         );
 
         // Check if all archives are done
@@ -509,7 +548,7 @@ class WPRB_Restore_Engine {
             $state['progress'] = 100;
             $state['message']  = 'Wiederherstellung abgeschlossen!';
 
-            $this->log( 'Datei-Wiederherstellung abgeschlossen: ' . $state['files_extracted'] . ' Dateien' );
+            $this->log( 'Datei-Wiederherstellung abgeschlossen.' );
         }
 
         return $state;
@@ -518,22 +557,30 @@ class WPRB_Restore_Engine {
     /**
      * Extract a .tar.gz file.
      */
-    private function extract_tar_gz( $archive, $destination ) {
+    private function extract_tar_gz( $archive, $destination, $selected_files = [] ) {
         // Prefer system tar
         if ( function_exists( 'exec' ) ) {
-            $cmd = sprintf(
-                'tar -xzf %s -C %s 2>&1',
+            $cmd_base = sprintf(
+                'tar -xzf %s -C %s',
                 escapeshellarg( $archive ),
                 escapeshellarg( $destination )
             );
 
+            $tmp_list = null;
+            if ( ! empty( $selected_files ) ) {
+                $tmp_list = tempnam( sys_get_temp_dir(), 'wprb_restore_' );
+                file_put_contents( $tmp_list, implode( "\n", $selected_files ) );
+                $cmd_base .= ' -T ' . escapeshellarg( $tmp_list );
+            }
+
+            $cmd = $cmd_base . ' 2>&1';
             exec( $cmd, $output, $return_code );
 
+            if ( $tmp_list && file_exists( $tmp_list ) ) unlink( $tmp_list );
+
             if ( $return_code === 0 ) {
-                // Count extracted files (approximate)
-                $cmd2 = sprintf( 'tar -tzf %s 2>/dev/null | wc -l', escapeshellarg( $archive ) );
-                $count = (int) trim( shell_exec( $cmd2 ) );
-                return [ 'success' => true, 'count' => $count ];
+                // Count (approx)
+                return [ 'success' => true, 'count' => 1 ];
             }
 
             return [ 'error' => 'tar fehlgeschlagen: ' . implode( "\n", $output ) ];
@@ -543,8 +590,9 @@ class WPRB_Restore_Engine {
         if ( class_exists( 'PharData' ) ) {
             try {
                 $phar = new PharData( $archive );
-                $phar->extractTo( $destination, null, true );
-                return [ 'success' => true, 'count' => $phar->count() ];
+                $files_to_extract = ! empty( $selected_files ) ? $selected_files : null;
+                $phar->extractTo( $destination, $files_to_extract, true );
+                return [ 'success' => true, 'count' => 1 ];
             } catch ( Exception $e ) {
                 return [ 'error' => 'PharData: ' . $e->getMessage() ];
             }
@@ -556,7 +604,7 @@ class WPRB_Restore_Engine {
     /**
      * Extract a .zip file.
      */
-    private function extract_zip( $archive, $destination ) {
+    private function extract_zip( $archive, $destination, $selected_files = [] ) {
         if ( ! class_exists( 'ZipArchive' ) ) {
             return [ 'error' => 'ZipArchive nicht verfügbar.' ];
         }
@@ -569,10 +617,12 @@ class WPRB_Restore_Engine {
         }
 
         $count = $zip->numFiles;
-        $zip->extractTo( $destination );
+        $entries = ! empty( $selected_files ) ? $selected_files : null;
+        
+        $zip->extractTo( $destination, $entries );
         $zip->close();
 
-        return [ 'success' => true, 'count' => $count ];
+        return [ 'success' => true, 'count' => $entries ? count($entries) : $count ];
     }
 
     /**

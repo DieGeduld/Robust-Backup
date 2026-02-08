@@ -11,6 +11,10 @@
     let startTime = null;
     let pollTimer = null;
 
+    // Selective Restore State
+    let selectedBackupFiles = null;
+    let allBackupFiles = [];
+
     // ─────────────────────────────────────────────
     // Helpers
     // ─────────────────────────────────────────────
@@ -487,6 +491,21 @@
         $('#wprb-opt-db-card').toggleClass('wprb-checkbox-disabled', !info.has_db);
         $('#wprb-opt-files-card').toggleClass('wprb-checkbox-disabled', !info.has_files);
 
+        // Selective Restore Logic
+        // Only allow selection if files are present AND local (not cloud-only/deleted locally)
+        if (info.has_files && !info.local_deleted) {
+            $('#wprb-restore-files-select-btn').show();
+            $('#wprb-restore-files-note').hide();
+        } else if (info.has_files && info.local_deleted) {
+            $('#wprb-restore-files-select-btn').hide();
+            $('#wprb-restore-files-note').text('(Nicht lokal verfügbar – selektive Wiederherstellung nicht möglich)').show();
+        } else {
+            $('#wprb-restore-files-select-btn').hide();
+            $('#wprb-restore-files-note').hide();
+        }
+        selectedBackupFiles = null;
+        updateFileSelectionLabel();
+
         $('#wprb-restore-step1').slideUp(200, function () {
             $('#wprb-restore-step2').slideDown(200);
         });
@@ -517,11 +536,18 @@
             $('#wprb-restore-progress').slideDown(200);
         });
 
+        // Use selected files if available and Files checked
+        let filesToSend = [];
+        if (restoreFiles && selectedBackupFiles !== null) {
+            filesToSend = selectedBackupFiles;
+        }
+
         ajax('wprb_start_restore', {
             backup_id: backupId,
             restore_db: restoreDb ? 1 : 0,
             restore_files: restoreFiles ? 1 : 0,
             create_snapshot: createSnapshot ? 1 : 0,
+            selected_files: filesToSend
         })
             .done(function (response) {
                 if (response.success) {
@@ -533,6 +559,76 @@
             .fail(function () {
                 restoreError(data.strings.error);
             });
+    }
+
+    // Selective Restore Helpers
+
+    function updateFileSelectionLabel() {
+        const count = selectedBackupFiles ? selectedBackupFiles.length : 0;
+        const text = selectedBackupFiles ? count + ' Dateien ausgewählt' : 'Alle Dateien (Standard)';
+        $('#wprb-file-selection-count').text(text);
+        
+        const btnText = selectedBackupFiles ? 'Auswahl ändern (' + count + ')' : 'Auswählen';
+        $('#wprb-restore-files-select-btn').text(btnText);
+    }
+
+    function openFileSelectionModal(backupId) {
+        $('#wprb-file-selection-modal, #wprb-modal-backdrop').fadeIn(200);
+        $('#wprb-file-tree').html('<p class="wprb-muted">Lade Dateiliste...</p>');
+        $('#wprb-file-search').val('');
+        
+        ajax('wprb_get_backup_files', { backup_id: backupId })
+        .done(function(response) {
+            if (response.success) {
+                renderFileList(response.data.files);
+            } else {
+                $('#wprb-file-tree').html('<p class="wprb-notice-error">' + (response.data.message || 'Fehler beim Laden') + '</p>');
+            }
+        });
+    }
+    
+    function closeFileModal() {
+        $('#wprb-file-selection-modal, #wprb-modal-backdrop').fadeOut(200);
+    }
+    
+    function renderFileList(files) {
+        allBackupFiles = files; // Cache
+        let html = '';
+        
+        if (!files || files.length === 0) {
+            html = '<p>Keine Dateien gefunden.</p>';
+        } else if (files.length > 20000) {
+            html = '<p class="wprb-notice-warning">Zu viele Dateien zum Anzeigen (' + files.length + '). Selektive Wiederherstellung nicht verfügbar.</p>';
+        } else {
+            // Check previously selected
+            const isAll = selectedBackupFiles === null;
+            
+            files.forEach(function(f) {
+                const checked = isAll || (selectedBackupFiles && selectedBackupFiles.includes(f)) ? 'checked' : '';
+                html += '<label class="wprb-file-item" style="display:block; padding: 2px 0;"><input type="checkbox" class="wprb-file-checkbox" value="' + f + '" ' + checked + '> <span style="font-family:monospace;">' + f + '</span></label>';
+            });
+        }
+        
+        $('#wprb-file-tree').html(html);
+    }
+
+    function saveFileSelection() {
+        const checked = [];
+        $('.wprb-file-checkbox:checked').each(function() {
+            checked.push($(this).val());
+        });
+        
+        if (checked.length === 0 && allBackupFiles.length > 0) {
+             if (!confirm("Keine Dateien ausgewählt. Dies wird KEINE Dateien wiederherstellen. Fortfahren?")) return;
+             selectedBackupFiles = [];
+        } else if (checked.length === allBackupFiles.length) {
+             selectedBackupFiles = null;
+        } else {
+             selectedBackupFiles = checked;
+        }
+        
+        updateFileSelectionLabel();
+        closeFileModal();
     }
 
     function processRestoreNext() {
@@ -787,6 +883,31 @@
                     $(target).slideUp(200);
                 }
             }
+        });
+
+        // Selective Restore: Modal
+        $(document).on('click', '#wprb-restore-files-select-btn', function (e) {
+            e.preventDefault();
+            const id = $('#wprb-restore-select').val();
+            if (id) openFileSelectionModal(id);
+        });
+
+        $(document).on('click', '#wprb-file-modal-cancel, .wprb-modal-close, #wprb-modal-backdrop', function (e) {
+            e.preventDefault();
+            closeFileModal();
+        });
+
+        $(document).on('click', '#wprb-file-modal-save', function (e) {
+            e.preventDefault();
+            saveFileSelection();
+        });
+        
+        $(document).on('input', '#wprb-file-search', function () {
+            const term = $(this).val().toLowerCase();
+            $('.wprb-file-item').each(function() {
+                const text = $(this).text().toLowerCase();
+                $(this).toggle(text.indexOf(term) > -1);
+            });
         });
 
         // Restore: select change

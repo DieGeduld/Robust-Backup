@@ -22,6 +22,7 @@ define( 'WPRB_BACKUP_DIR', WP_CONTENT_DIR . '/wprb-backups/' );
 define( 'WPRB_LOG_FILE', WPRB_BACKUP_DIR . 'backup.log' );
 
 // Autoload classes
+require_once WPRB_PLUGIN_DIR . 'includes/class-logger.php';
 require_once WPRB_PLUGIN_DIR . 'includes/class-db-exporter.php';
 require_once WPRB_PLUGIN_DIR . 'includes/class-file-archiver.php';
 require_once WPRB_PLUGIN_DIR . 'includes/class-storage-manager.php';

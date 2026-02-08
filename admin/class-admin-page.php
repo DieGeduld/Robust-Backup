@@ -19,6 +19,28 @@ class WPRB_Admin_Page {
         add_action( 'admin_menu', [ $this, 'add_menu' ] );
         add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_assets' ] );
         add_action( 'admin_init', [ $this, 'handle_oauth_callback' ] );
+        add_action( 'admin_post_wprb_download_log', [ $this, 'download_log' ] );
+    }
+
+    public function download_log() {
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_die( 'Keine Berechtigung.' );
+        }
+
+        $log_file = defined('WPRB_LOG_FILE') ? WPRB_LOG_FILE : '';
+        if ( ! $log_file || ! file_exists( $log_file ) ) {
+            wp_die( 'Kein Log gefunden.' );
+        }
+
+        header( 'Content-Description: File Transfer' );
+        header( 'Content-Type: text/plain' );
+        header( 'Content-Disposition: attachment; filename="wprb-backup.log.txt"' );
+        header( 'Content-Length: ' . filesize( $log_file ) );
+        header( 'Cache-Control: must-revalidate' );
+        header( 'Pragma: public' );
+        
+        readfile( $log_file );
+        exit;
     }
 
     public function add_menu() {
@@ -1173,7 +1195,13 @@ class WPRB_Admin_Page {
                 </div>
             </div>
 
-            <div style="margin-bottom: 20px; display: flex; justify-content: flex-end;">
+            <div style="margin-bottom: 20px; display: flex; justify-content: flex-end; align-items: center; gap: 10px;">
+                <?php if ( file_exists( WPRB_LOG_FILE ) && filesize( WPRB_LOG_FILE ) > 0 ) : ?>
+                <a href="<?php echo admin_url( 'admin-post.php?action=wprb_download_log' ); ?>" class="button">
+                    <span class="dashicons dashicons-download"></span> Log herunterladen (.txt)
+                </a>
+                <?php endif; ?>
+
                  <form method="post" style="display: inline-block;">
                     <?php wp_nonce_field( 'wprb_clear_log_nonce' ); ?>
                     <button type="submit" name="wprb_clear_log" class="button button-link-delete" 

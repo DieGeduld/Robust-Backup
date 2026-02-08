@@ -682,10 +682,10 @@ class WPRB_Restore_Engine {
     /**
      * Simple log writer.
      */
+    /**
+     * Simple log writer.
+     */
     private function log( $message ) {
-        $timestamp = date( 'Y-m-d H:i:s' );
-        $line      = "[{$timestamp}] [Restore] {$message}\n";
-
-        file_put_contents( WPRB_LOG_FILE, $line, FILE_APPEND | LOCK_EX );
+        WPRB_Logger::log( $message, 'RESTORE' );
     }
 }

@@ -383,13 +383,6 @@ class WPRB_Backup_Engine {
      * @param string $level 'INFO', 'ERROR', 'DEBUG'
      */
     private function log( $message, $level = 'INFO' ) {
-        $timestamp = wp_date( 'Y-m-d H:i:s' );
-        $line      = "[{$timestamp}] [{$level}] {$message}\n";
-
-        if ( ! file_exists( WPRB_BACKUP_DIR ) ) {
-            wp_mkdir_p( WPRB_BACKUP_DIR );
-        }
-
-        file_put_contents( WPRB_LOG_FILE, $line, FILE_APPEND | LOCK_EX );
+        WPRB_Logger::log( $message, $level );
     }
 }

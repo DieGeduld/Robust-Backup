@@ -1087,5 +1087,19 @@
                 });
         });
     });
+    
+    // Auto-select backup for restore if ID in URL
+    $(document).ready(function() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const restoreId = urlParams.get('backup_id');
+        if (restoreId && $('#wprb-restore-select').length > 0) {
+            const $option = $('#wprb-restore-select option[value="' + restoreId + '"]');
+            if ($option.length > 0) {
+                $('#wprb-restore-select').val(restoreId).trigger('change');
+                // Auto analyze
+                analyzeBackup(restoreId);
+            }
+        }
+    });
 
 })(jQuery);

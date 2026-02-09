@@ -487,6 +487,11 @@ class WPRB_Admin_Page {
                                     <?php endforeach; ?>
                                 </td>
                                 <td>
+                                    <a href="<?php echo esc_url( admin_url( 'admin.php?page=wprb-restore&backup_id=' . $backup['id'] ) ); ?>" 
+                                       class="button button-small wprb-restore-backup-link"
+                                       style="margin-right: 4px;">
+                                        <span class="dashicons dashicons-undo"></span> Wiederherstellen
+                                    </a>
                                     <button class="button button-small wprb-delete-backup"
                                             data-id="<?php echo esc_attr( $backup['id'] ); ?>">
                                         <span class="dashicons dashicons-trash"></span> Löschen

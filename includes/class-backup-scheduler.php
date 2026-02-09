@@ -253,30 +253,59 @@ class WPRB_Backup_Scheduler {
 
         // Send Email Notification
         $notify_type = get_option( 'wprb_email_notification_type', 'none' );
-        if ( $notify_type !== 'none' ) {
-            $has_error = ! empty( $result['errors'] );
+        $to_email    = get_option( 'wprb_notification_email', get_option( 'admin_email' ) );
+
+        // Log configuration for debugging
+        WPRB_Logger::log( sprintf( "Email-Check: Typ='%s', Empfänger='%s'", $notify_type, $to_email ), 'CRON' );
+
+        if ( $notify_type !== 'none' && ! empty( $to_email ) ) {
+            $has_error    = ! empty( $result['errors'] );
+            $should_send  = false;
             
-            if ( $notify_type === 'always' || ( $notify_type === 'error' && $has_error ) ) {
-                $to = get_option( 'wprb_notification_email', get_option( 'admin_email' ) );
+            if ( $notify_type === 'always' ) {
+                $should_send = true;
+            } elseif ( $notify_type === 'error' && $has_error ) {
+                $should_send = true;
+            }
+
+            if ( $should_send ) {
+
                 $subject = sprintf(
                     '[%s] Backup-Bericht: %s',
                     get_bloginfo( 'name' ),
-                    $has_error ? 'Fehler' : 'Erfolgreich'
+                    $has_error ? 'FEHLGESCHLAGEN' : 'Erfolgreich'
                 );
                 
-                $body  = "Backup-Bericht für " . get_bloginfo( 'url' ) . "\n\n";
+                $body  = "Backup-Bericht für " . get_site_url() . "\n";
+                $body .= "Zeitpunkt: " . wp_date( 'd.m.Y H:i:s' ) . "\n\n";
                 $body .= "Status: " . ( $has_error ? 'FEHLGESCHLAGEN' : 'ERFOLGREICH' ) . "\n";
-                $body .= "Zeitplan: " . ($schedule_id ? $schedule_id : 'Global') . "\n";
-                $body .= "Nachricht: " . ($result['message'] ?? '') . "\n";
+                $body .= "Zeitplan-ID: " . ($schedule_id ? $schedule_id : 'Global/Manuell') . "\n";
+                $body .= "Meldung: " . ($result['message'] ?? '') . "\n";
                 
                 if ( $has_error ) {
-                    $body .= "\nFehler-Details:\n" . implode( "\n", $result['errors'] ) . "\n";
+                    $body .= "\n---------- FEHLER ----------\n";
+                    $body .= implode( "\n", $result['errors'] ) . "\n";
+                    $body .= "----------------------------\n";
                 }
+
+                $body .= "\n\n--\nWP Robust Backup Plugin\n";
                 
-                $body .= "\n\n--\nWP Robust Backup Plugin";
+                WPRB_Logger::log( "Versuche Email zu senden an: $to_email", 'CRON' );
                 
-                wp_mail( $to, $subject, $body );
+                $sent = wp_mail( $to_email, $subject, $body );
+                
+                if ( $sent ) {
+                    WPRB_Logger::log( "Email erfolgreich versendet.", 'CRON' );
+                } else {
+                    WPRB_Logger::log( "FEHLER: Email konnte nicht versendet werden. Bitte Mail-Server prüfen.", 'CRON' );
+                }
+            } else {
+                 WPRB_Logger::log( "Keine Email gesendet (Bedingung nicht erfüllt: Typ='$notify_type', Fehler=" . ($has_error?'Ja':'Nein') . ")", 'CRON' );
             }
+        } else {
+             if ( $notify_type !== 'none' && empty( $to_email ) ) {
+                 WPRB_Logger::log( "WARNUNG: Email aktiviert, aber kein Empfänger konfiguriert.", 'CRON' );
+             }
         }
     }
 

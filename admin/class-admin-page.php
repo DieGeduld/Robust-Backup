@@ -961,11 +961,19 @@ class WPRB_Admin_Page {
                         </td>
                     </tr>
                     <tr>
+                        </td>
+                    </tr>
+                    <tr>
                         <th>Empfänger-Adresse</th>
                         <td>
-                            <input type="email" name="notification_email" class="regular-text"
+                            <input type="email" name="notification_email" class="regular-text" id="wprb-notify-email-input"
                                    value="<?php echo esc_attr( get_option( 'wprb_notification_email', get_option( 'admin_email' ) ) ); ?>">
-                            <p class="description">Standardmäßig wird die WordPress-Admin-E-Mail verwendet.</p>
+                            <p class="description" style="margin-bottom: 10px;">Standardmäßig wird die WordPress-Admin-E-Mail verwendet (<?php echo esc_html(get_option('admin_email')); ?>).</p>
+                            
+                            <button type="button" class="button" id="wprb-send-test-email-btn">
+                                <span class="dashicons dashicons-email-alt"></span> Test-Email senden
+                            </button>
+                            <span id="wprb-test-email-status" style="margin-left: 10px;"></span>
                         </td>
                     </tr>
                 </table>

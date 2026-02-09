@@ -37,6 +37,37 @@ class WPRB_Ajax_Handler {
 
         // Download handler
         add_action( 'wp_ajax_wprb_download', [ $this, 'handle_download' ] );
+        
+        // Test Email
+        add_action( 'wp_ajax_wprb_send_test_email', [ $this, 'send_test_email' ] );
+    }
+
+    /**
+     * Send a test email.
+     */
+    public function send_test_email() {
+        $this->verify();
+
+        $email = sanitize_email( $_POST['email'] ?? '' );
+        if ( ! is_email( $email ) ) {
+            wp_send_json_error( [ 'message' => 'Ungültige Email-Adresse.' ] );
+        }
+
+        $subject = 'Test-Email von WP Robust Backup';
+        $body    = "Hallo,\n\ndies ist eine Test-Email von deiner WordPress-Installation (" . get_site_url() . ").\n\nWenn du diese Nachricht liest, funktionieren deine Email-Einstellungen korrekt!\n\n--\nWP Robust Backup";
+        
+        // Log attempt
+        WPRB_Logger::log( "Manueller Email-Test an: $email", 'TEST' );
+
+        $sent = wp_mail( $email, $subject, $body );
+
+        if ( $sent ) {
+            WPRB_Logger::log( "Test-Email erfolgreich an PHP mail() übergeben.", 'TEST' );
+            wp_send_json_success( [ 'message' => 'Email gesendet.' ] );
+        } else {
+            WPRB_Logger::log( "FEHLER: Test-Email konnte nicht gesendet werden.", 'TEST' );
+            wp_send_json_error( [ 'message' => 'wp_mail() schlug fehl. Bitte Server-Logs prüfen.' ] );
+        }
     }
 
     /**

@@ -1086,6 +1086,37 @@
                     alert(data.strings.error);
                 });
         });
+
+        // Send Test Email
+        $(document).on('click', '#wprb-send-test-email-btn', function(e) {
+            e.preventDefault();
+            const $btn = $(this);
+            const $status = $('#wprb-test-email-status');
+            const email = $('#wprb-notify-email-input').val();
+            
+            if (!email) {
+                alert('Bitte geben Sie eine Email-Adresse ein.');
+                return;
+            }
+            
+            $btn.prop('disabled', true);
+            $status.text('Sende...').css('color', '#666');
+            
+            ajax('wprb_send_test_email', { email: email })
+                .done(function(response) {
+                    if (response.success) {
+                        $status.text('Gesendet! Bitte Posteingang prüfen.').css('color', '#00a32a');
+                    } else {
+                        $status.text('Fehler: ' + (response.data ? response.data.message : 'Unbekannt')).css('color', '#d63638');
+                    }
+                })
+                .fail(function() {
+                    $status.text('Verbindungsfehler.').css('color', '#d63638');
+                })
+                .always(function() {
+                    $btn.prop('disabled', false);
+                });
+        });
     });
     
     // Auto-select backup for restore if ID in URL

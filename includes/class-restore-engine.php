@@ -88,6 +88,33 @@ class WPRB_Restore_Engine {
      */
     public function get_file_list( $backup_id ) {
         $backup_dir = WPRB_BACKUP_DIR . sanitize_file_name( $backup_id ) . '/';
+        
+        // Check for pre-generated manifest (ZIP format - New)
+        $manifest_zip = $backup_dir . 'file_manifest.zip';
+        if ( file_exists( $manifest_zip ) && class_exists( 'ZipArchive' ) ) {
+            $zip = new ZipArchive();
+            if ( $zip->open( $manifest_zip ) === true ) {
+                $content = $zip->getFromName( 'file_manifest.json' );
+                $zip->close();
+                if ( $content ) {
+                    $data = json_decode( $content, true );
+                    if ( is_array( $data ) ) {
+                        return array_map( function($f) { return ltrim( $f, '/' ); }, $data );
+                    }
+                }
+            }
+        }
+
+        // Check for pre-generated manifest (GZ format - Old)
+        $manifest_gz = $backup_dir . 'file_manifest.json.gz';
+        if ( file_exists( $manifest_gz ) ) {
+             $content = gzdecode( file_get_contents( $manifest_gz ) );
+             $data    = json_decode( $content, true );
+             if ( is_array( $data ) ) {
+                 return array_map( function($f) { return ltrim( $f, '/' ); }, $data );
+             }
+        }
+
         $archives   = glob( $backup_dir . 'files-part*' );
         $files      = [];
 
@@ -476,9 +503,7 @@ class WPRB_Restore_Engine {
     /**
      * Restore files from archives.
      */
-    /**
-     * Restore files from archives.
-     */
+
     private function process_file_restore( &$state ) {
         $backup_dir      = $state['backup_dir'];
         $archives        = $state['archives'];
@@ -682,9 +707,7 @@ class WPRB_Restore_Engine {
     /**
      * Simple log writer.
      */
-    /**
-     * Simple log writer.
-     */
+
     private function log( $message ) {
         WPRB_Logger::log( $message, 'RESTORE' );
     }

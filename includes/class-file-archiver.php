@@ -104,6 +104,9 @@ class WPRB_File_Archiver {
 
         // Nothing left to process?
         if ( empty( $batch ) && $is_eof ) {
+            // Generate Manifest
+            $this->generate_manifest( $file_list, $backup_dir );
+
             // Finalize
             delete_option( $this->state_key() );
             @unlink( $file_list );
@@ -250,6 +253,67 @@ class WPRB_File_Archiver {
             }
         }
         return false;
+    }
+
+    /**
+     * Generate a compressed ZIP manifest of all files in the backup.
+     * Uses streaming to avoid memory issues with large file lists.
+     */
+    private function generate_manifest( $list_file, $backup_dir ) {
+        $manifest_json = $backup_dir . 'file_manifest.json';
+        $manifest_zip  = $backup_dir . 'file_manifest.zip';
+
+        // 1. Stream file list to JSON file
+        $source = fopen( $list_file, 'r' );
+        $dest   = fopen( $manifest_json, 'w' );
+        
+        if ( ! $source || ! $dest ) {
+            return;
+        }
+
+        fwrite( $dest, '[' );
+        
+        $first = true;
+        while ( ! feof( $source ) ) {
+            $line = fgets( $source );
+            if ( $line === false ) {
+                break;
+            }
+            
+            $line = trim( $line );
+            if ( ! empty( $line ) ) {
+                $rel_path = str_replace( ABSPATH, '', $line );
+                
+                if ( ! $first ) {
+                    fwrite( $dest, ',' );
+                }
+                fwrite( $dest, wp_json_encode( $rel_path ) );
+                $first = false;
+            }
+        }
+        
+        fwrite( $dest, ']' );
+        fclose( $source );
+        fclose( $dest );
+
+        // 2. Create ZIP archive
+        if ( class_exists( 'ZipArchive' ) ) {
+            $zip = new ZipArchive();
+            if ( $zip->open( $manifest_zip, ZipArchive::CREATE | ZipArchive::OVERWRITE ) === true ) {
+                $zip->addFile( $manifest_json, 'file_manifest.json' );
+                $zip->close();
+            }
+        } else {
+            // Fallback: Just GZIP it if ZipArchive is missing (unlikely in WP)
+            $content = file_get_contents( $manifest_json );
+            $compressed = gzencode( $content, 9 );
+            file_put_contents( $backup_dir . 'file_manifest.json.gz', $compressed );
+        }
+
+        // 3. Cleanup raw JSON
+        if ( file_exists( $manifest_json ) ) {
+            @unlink( $manifest_json );
+        }
     }
 
     /**

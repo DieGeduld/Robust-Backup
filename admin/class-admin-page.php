@@ -263,11 +263,18 @@ class WPRB_Admin_Page {
                     <?php
                     $connected = $this->get_connected_storages();
                     if ( ! empty( $connected ) ) :
+                        $dashboard_icons = [
+                            'dropbox' => 'dashicons-dropbox',
+                            'gdrive'  => 'dashicons-google',
+                            'sftp'    => 'dashicons-admin-network',
+                            's3'      => 'dashicons-amazon',
+                        ];
                         foreach ( $connected as $storage ) :
+                            $d_icon = $dashboard_icons[ $storage ] ?? 'dashicons-cloud';
                             ?>
                             <label style="margin-right: 15px;">
                                 <input type="checkbox" name="backup_dest[]" value="<?php echo esc_attr( $storage ); ?>"> 
-                                <span class="dashicons dashicons-cloud" style="color: #646970; font-size: 16px; width: 16px; height: 16px; vertical-align: middle;"></span> <?php echo esc_html( ucfirst( $storage ) ); ?>
+                                <span class="dashicons <?php echo esc_attr( $d_icon ); ?>" style="color: #646970; font-size: 16px; width: 16px; height: 16px; vertical-align: middle;"></span> <?php echo esc_html( ucfirst( $storage ) ); ?>
                             </label>
                             <?php
                         endforeach;

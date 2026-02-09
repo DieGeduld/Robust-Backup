@@ -166,10 +166,16 @@ class WPRB_Restore_Engine {
         $is_local_deleted = ! empty( $meta['local_deleted'] );
 
         // Initial check, skipped if cloud backup
+        $local_archives = [];
+        $local_db_size  = 0;
+
         if ( ! $is_local_deleted ) {
             $has_db    = file_exists( $backup_dir . 'database.sql' );
-            $archives  = glob( $backup_dir . 'files-part*' );
-            $has_files = ! empty( $archives );
+            $local_db_size = $has_db ? filesize( $backup_dir . 'database.sql' ) : 0;
+
+            $raw_archives  = glob( $backup_dir . 'files-part*' );
+            $local_archives = ! empty( $raw_archives ) ? array_map( 'basename', $raw_archives ) : [];
+            $has_files = ! empty( $local_archives );
 
             if ( $restore_db && ! $has_db ) {
                 return [ 'error' => true, 'message' => 'Kein Datenbank-Dump in diesem Backup gefunden.' ];
@@ -205,10 +211,10 @@ class WPRB_Restore_Engine {
             // DB restore state
             'db_file'         => $backup_dir . 'database.sql',
             'db_offset'       => 0,
-            'db_size'         => 0, // Will be updated after download
+            'db_size'         => $local_db_size, // Updated
             'db_statements'   => 0,
             // File restore state
-            'archives'        => [], // Will be updated after download
+            'archives'        => $local_archives, // Updated
             'current_archive' => 0,
             'files_extracted' => 0,
             // Snapshot
@@ -531,10 +537,12 @@ class WPRB_Restore_Engine {
         // Determine archive type and extract
         $ext = pathinfo( $archive_file, PATHINFO_EXTENSION );
 
+        $restore_root = ABSPATH;
+
         if ( $ext === 'gz' || $this->is_tar_gz( $archive_file ) ) {
-            $result = $this->extract_tar_gz( $archive_file, ABSPATH, $selected_files );
+            $result = $this->extract_tar_gz( $archive_file, $restore_root, $selected_files );
         } elseif ( $ext === 'zip' ) {
-            $result = $this->extract_zip( $archive_file, ABSPATH, $selected_files );
+            $result = $this->extract_zip( $archive_file, $restore_root, $selected_files );
         } else {
             $result = [ 'error' => 'Unbekanntes Archiv-Format: ' . $ext ];
         }
@@ -585,10 +593,36 @@ class WPRB_Restore_Engine {
     private function extract_tar_gz( $archive, $destination, $selected_files = [] ) {
         // Prefer system tar
         if ( function_exists( 'exec' ) ) {
+            $use_dest = $destination;
+            $test_path = '';
+
+            if ( ! empty( $selected_files ) ) {
+                $test_path = reset( $selected_files );
+            } else {
+                // For full restore, peek into the archive to guess path structure
+                $peek = shell_exec( 'tar -tf ' . escapeshellarg( $archive ) . ' | head -n 1' );
+                if ( $peek ) {
+                    $test_path = trim( $peek );
+                }
+            }
+
+            if ( $test_path ) {
+                 // Clean up absolute path (remove leading slash if present, though tar list usually doesn't have it)
+                 $abs_no_slash = ltrim( ABSPATH, '/' );
+                 
+                 // If the file path starts with the structure of ABSPATH, assume it's an absolute path archive
+                 // e.g. Archive: "Users/fabian/wp/index.php", ABSPATH: "/Users/fabian/wp/"
+                 if ( ! empty( $abs_no_slash ) && strpos( $test_path, $abs_no_slash ) === 0 ) {
+                     // DEBUG: Do not force root for testing subdir restore
+                     // $use_dest = '/';
+                     // Using relative extraction to test dir
+                 }
+            }
+
             $cmd_base = sprintf(
                 'tar -xzf %s -C %s',
                 escapeshellarg( $archive ),
-                escapeshellarg( $destination )
+                escapeshellarg( $use_dest )
             );
 
             $tmp_list = null;
@@ -599,7 +633,14 @@ class WPRB_Restore_Engine {
             }
 
             $cmd = $cmd_base . ' 2>&1';
+            
+            // DEBUG: Log used command
+            $this->log( 'TAR Command: ' . $cmd );
+            
             exec( $cmd, $output, $return_code );
+            
+            // DEBUG: Log command output
+            $this->log( 'TAR Output (' . $return_code . '): ' . implode( ' | ', $output ) );
 
             if ( $tmp_list && file_exists( $tmp_list ) ) unlink( $tmp_list );
 
@@ -608,7 +649,7 @@ class WPRB_Restore_Engine {
                 return [ 'success' => true, 'count' => 1 ];
             }
 
-            return [ 'error' => 'tar fehlgeschlagen: ' . implode( "\n", $output ) ];
+            return [ 'error' => 'tar fehlgeschlagen (' . $return_code . '): ' . implode( "\n", $output ) ];
         }
 
         // Fallback: PharData
@@ -644,10 +685,14 @@ class WPRB_Restore_Engine {
         $count = $zip->numFiles;
         $entries = ! empty( $selected_files ) ? $selected_files : null;
         
-        $zip->extractTo( $destination, $entries );
+        $success = $zip->extractTo( $destination, $entries );
         $zip->close();
 
-        return [ 'success' => true, 'count' => $entries ? count($entries) : $count ];
+        if ( $success ) {
+            return [ 'success' => true, 'count' => $entries ? count($entries) : $count ];
+        } else {
+            return [ 'error' => 'ZIP ExtractTo schlug fehl' ];
+        }
     }
 
     /**

@@ -352,9 +352,14 @@ class WPRB_File_Archiver {
         $tar_name = sprintf( 'files-part%03d.tar.gz', $part );
         $tar_path = $backup_dir . $tar_name;
 
+        // Create relative paths for tar to match ZIP behavior
+        $relative_files = array_map( function( $file ) {
+            return ltrim( str_replace( ABSPATH, '', $file ), '/' );
+        }, $files );
+
         // Write file list for tar
         $list_file = $backup_dir . 'tar_batch.txt';
-        file_put_contents( $list_file, implode( "\n", $files ) );
+        file_put_contents( $list_file, implode( "\n", $relative_files ) );
 
         // Append to existing tar or create new
         if ( file_exists( $tar_path ) ) {

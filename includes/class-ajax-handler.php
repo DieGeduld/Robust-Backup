@@ -54,12 +54,27 @@ class WPRB_Ajax_Handler {
         }
 
         $subject = 'Test-Email von WP Robust Backup';
-        $body    = "Hallo,\n\ndies ist eine Test-Email von deiner WordPress-Installation (" . get_site_url() . ").\n\nWenn du diese Nachricht liest, funktionieren deine Email-Einstellungen korrekt!\n\n--\nWP Robust Backup";
+        
+        // Use HTML Template
+        $data = [
+            'status_text' => 'TEST',
+            'has_error'   => false,
+            'site_name'   => get_bloginfo( 'name' ),
+            'site_url'    => get_site_url(),
+            'date'        => wp_date( 'd.m.Y H:i:s' ),
+            'schedule_id' => 'Manuell/Test',
+            'message'     => "Dies ist eine Test-Nachricht.\nWenn du dies liest, funktioniert der Email-Versand korrekt.",
+            'errors'      => [],
+            'report_url'  => admin_url( 'admin.php?page=wp-robust-backup' ),
+        ];
+
+        $body    = WPRB_Backup_Scheduler::render_email_template( $data );
+        $headers = [ 'Content-Type: text/html; charset=UTF-8' ];
         
         // Log attempt
-        WPRB_Logger::log( "Manueller Email-Test an: $email", 'TEST' );
+        WPRB_Logger::log( "Manueller Email-Test (HTML) an: $email", 'TEST' );
 
-        $sent = wp_mail( $email, $subject, $body );
+        $sent = wp_mail( $email, $subject, $body, $headers );
 
         if ( $sent ) {
             WPRB_Logger::log( "Test-Email erfolgreich an PHP mail() übergeben.", 'TEST' );

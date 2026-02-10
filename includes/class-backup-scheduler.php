@@ -270,29 +270,36 @@ class WPRB_Backup_Scheduler {
 
             if ( $should_send ) {
 
+                $status_text = $has_error ? 'FEHLGESCHLAGEN' : 'ERFOLGREICH';
+                $site_name   = get_bloginfo( 'name' );
+                $site_url    = get_site_url();
+                $date        = wp_date( 'd.m.Y H:i:s' );
+                $report_url  = admin_url( 'admin.php?page=wp-robust-backup' );
+
                 $subject = sprintf(
                     '[%s] Backup-Bericht: %s',
-                    get_bloginfo( 'name' ),
-                    $has_error ? 'FEHLGESCHLAGEN' : 'Erfolgreich'
+                    $site_name,
+                    $status_text
                 );
                 
-                $body  = "Backup-Bericht für " . get_site_url() . "\n";
-                $body .= "Zeitpunkt: " . wp_date( 'd.m.Y H:i:s' ) . "\n\n";
-                $body .= "Status: " . ( $has_error ? 'FEHLGESCHLAGEN' : 'ERFOLGREICH' ) . "\n";
-                $body .= "Zeitplan-ID: " . ($schedule_id ? $schedule_id : 'Global/Manuell') . "\n";
-                $body .= "Meldung: " . ($result['message'] ?? '') . "\n";
-                
-                if ( $has_error ) {
-                    $body .= "\n---------- FEHLER ----------\n";
-                    $body .= implode( "\n", $result['errors'] ) . "\n";
-                    $body .= "----------------------------\n";
-                }
+                $data = [
+                    'status_text' => $status_text,
+                    'has_error'   => $has_error,
+                    'site_name'   => $site_name,
+                    'site_url'    => $site_url,
+                    'date'        => $date,
+                    'schedule_id' => $schedule_id ? $schedule_id : 'Global/Manuell',
+                    'message'     => $result['message'] ?? '',
+                    'errors'      => $result['errors'] ?? [],
+                    'report_url'  => $report_url,
+                ];
 
-                $body .= "\n\n--\nWP Robust Backup Plugin\n";
+                $body = self::render_email_template( $data );
                 
-                WPRB_Logger::log( "Versuche Email zu senden an: $to_email", 'CRON' );
+                WPRB_Logger::log( "Versuche Email (HTML) zu senden an: $to_email", 'CRON' );
                 
-                $sent = wp_mail( $to_email, $subject, $body );
+                $headers = [ 'Content-Type: text/html; charset=UTF-8' ];
+                $sent = wp_mail( $to_email, $subject, $body, $headers );
                 
                 if ( $sent ) {
                     WPRB_Logger::log( "Email erfolgreich versendet.", 'CRON' );
@@ -307,6 +314,24 @@ class WPRB_Backup_Scheduler {
                  WPRB_Logger::log( "WARNUNG: Email aktiviert, aber kein Empfänger konfiguriert.", 'CRON' );
              }
         }
+    }
+
+    /**
+     * Render email template.
+     */
+    public static function render_email_template( $data ) {
+        $template_path = WPRB_PLUGIN_DIR . 'templates/email-notification.php';
+        
+        if ( ! file_exists( $template_path ) ) {
+            return "Template nicht gefunden: $template_path";
+        }
+
+        // Extract variables for template use
+        extract( $data );
+
+        ob_start();
+        include $template_path;
+        return ob_get_clean();
     }
 
     /**

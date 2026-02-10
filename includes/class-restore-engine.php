@@ -18,6 +18,7 @@ class WPRB_Restore_Engine {
     const PHASE_INIT       = 'init';
     const PHASE_DOWNLOAD   = 'download';
     const PHASE_SNAPSHOT   = 'snapshot';
+    const PHASE_DECRYPT    = 'decrypt';
     const PHASE_DB         = 'database';
     const PHASE_FILES      = 'files';
     const PHASE_DONE       = 'done';
@@ -44,8 +45,20 @@ class WPRB_Restore_Engine {
 
         $is_local_deleted = ! empty( $meta['local_deleted'] );
         
-        $has_db    = file_exists( $backup_dir . 'database.sql' ) || ( $is_local_deleted && in_array( 'database.sql', $meta['files'] ?? [] ) );
-        $db_size   = file_exists( $backup_dir . 'database.sql' ) ? filesize( $backup_dir . 'database.sql' ) : 0;
+        $has_db    = file_exists( $backup_dir . 'database.sql' ) || file_exists( $backup_dir . 'database.sql.enc' );
+        // Also check if cloud file list has it
+        if ( ! $has_db && $is_local_deleted && in_array( 'database.sql', $meta['files'] ?? [] ) ) {
+             $has_db = true;
+        } elseif ( ! $has_db && $is_local_deleted && in_array( 'database.sql.enc', $meta['files'] ?? [] ) ) {
+             $has_db = true;
+        }
+
+        $db_size = 0;
+        if ( file_exists( $backup_dir . 'database.sql' ) ) {
+            $db_size = filesize( $backup_dir . 'database.sql' );
+        } elseif ( file_exists( $backup_dir . 'database.sql.enc' ) ) {
+            $db_size = filesize( $backup_dir . 'database.sql.enc' );
+        }
 
         // Find archive files
         $archives    = [];
@@ -59,10 +72,11 @@ class WPRB_Restore_Engine {
             }
         } else {
             foreach ( glob( $backup_dir . 'files-part*' ) as $archive ) {
+                $ext = pathinfo( $archive, PATHINFO_EXTENSION );
                 $size = filesize( $archive );
                 $archives[] = [
                     'name' => basename( $archive ),
-                    'size' => size_format( $size ),
+                    'size' => size_format( $size ) . ($ext === 'enc' ? ' 🔒' : ''),
                 ];
                 $total_asize += $size;
             }
@@ -272,15 +286,88 @@ class WPRB_Restore_Engine {
                 break;
 
             case self::PHASE_INIT:
-                // Move to the first restore phase
-                if ( $state['restore_db'] ) {
+                // Check if decryption is needed first
+                $backup_dir = $state['backup_dir'];
+                $has_enc_files = ! empty( glob( $backup_dir . '*.enc' ) );
+                
+                if ( $has_enc_files && empty( $state['decrypted'] ) ) {
+                    $state['phase'] = self::PHASE_DECRYPT;
+                    $state['message'] = 'Verschlüsselte Dateien gefunden. Starte Entschlüsselung...';
+                    // Identify files to decrypt
+                    $to_decrypt = glob( $backup_dir . '*.enc' );
+                    $state['files_to_decrypt'] = $to_decrypt;
+                    $state['decrypt_idx'] = 0;
+                } elseif ( $state['restore_db'] ) {
+                    // Update DB file location just in case it was decrypted
+                    if ( file_exists( $backup_dir . 'database.sql' ) ) {
+                        $state['db_file'] = $backup_dir . 'database.sql';
+                        $state['db_size'] = filesize( $state['db_file'] );
+                    }
+                    
                     $state['phase']   = self::PHASE_DB;
                     $state['message'] = 'Starte Datenbank-Wiederherstellung...';
                 } elseif ( $state['restore_files'] ) {
+                     // Update archives list
+                    $raw_archives  = glob( $backup_dir . 'files-part*' );
+                    // Filter out .enc if .tar.gz exists? 
+                    // Actually we should only use non-enc files for restore
+                    $ready_archives = [];
+                    foreach ( $raw_archives as $arc ) {
+                        if ( substr( $arc, -4 ) !== '.enc' ) {
+                            $ready_archives[] = basename( $arc );
+                        }
+                    }
+                    $state['archives'] = $ready_archives;
+
                     $state['phase']   = self::PHASE_FILES;
                     $state['message'] = 'Starte Datei-Wiederherstellung...';
                 } else {
                     $state['phase'] = self::PHASE_DONE;
+                }
+                $result = $state;
+                break;
+
+            case self::PHASE_DECRYPT:
+                $files = $state['files_to_decrypt'] ?? [];
+                $idx   = $state['decrypt_idx'] ?? 0;
+                
+                if ( $idx >= count( $files ) ) {
+                    $state['decrypted'] = true;
+                    $state['phase'] = self::PHASE_INIT; // Go back to Init to route to DB/Files
+                    $state['progress'] = 0;
+                    $state['message'] = 'Entschlüsselung abgeschlossen.';
+                    unset( $state['files_to_decrypt'], $state['decrypt_idx'] );
+                } else {
+                    $enc_file = $files[ $idx ];
+                    $base_name = basename( $enc_file, '.enc' );
+                    $dest_file = dirname( $enc_file ) . '/' . $base_name;
+                    
+                    // Only decrypt if dest doesn't exist (resume support)
+                    if ( ! file_exists( $dest_file ) ) {
+                        $pass = get_option( 'wprb_encryption_key' );
+                        if ( empty( $pass ) ) {
+                            $state['errors'][] = 'Passwort fehlt für Entschlüsselung von ' . basename($enc_file);
+                            $state['phase'] = self::PHASE_DONE;
+                            break;
+                        }
+                        
+                        $res = WPRB_Crypto::decrypt_file( $enc_file, $dest_file, $pass );
+                        if ( isset( $res['error'] ) ) {
+                             $state['errors'][] = 'Entschlüsselung fehlgeschlagen (' . basename($enc_file) . '): ' . $res['error'];
+                             // Critical error, stop?
+                             $state['phase'] = self::PHASE_DONE;
+                             break;
+                        } else {
+                            $this->log( 'Datei entschlüsselt: ' . basename( $dest_file ) );
+                            $temp_files = $state['temp_decrypted_files'] ?? [];
+                            $temp_files[] = $dest_file;
+                            $state['temp_decrypted_files'] = $temp_files; // Track for cleanup
+                        }
+                    }
+                    
+                    $state['decrypt_idx']++;
+                    $state['progress'] = round( ( $state['decrypt_idx'] / count( $files ) ) * 100 );
+                    $state['message'] = 'Entschlüssle ' . basename( $enc_file ) . '...';
                 }
                 $result = $state;
                 break;
@@ -294,6 +381,15 @@ class WPRB_Restore_Engine {
                 break;
 
             case self::PHASE_DONE:
+                // Cleanup temp decrypted files
+                if ( ! empty( $state['temp_decrypted_files'] ) ) {
+                    foreach ( $state['temp_decrypted_files'] as $f ) {
+                        if ( file_exists( $f ) ) {
+                            unlink( $f );
+                        }
+                    }
+                    unset( $state['temp_decrypted_files'] );
+                }
                 $result = $state;
                 break;
 
@@ -715,8 +811,17 @@ class WPRB_Restore_Engine {
 
         if ( $state ) {
             $this->log( 'Wiederherstellung abgebrochen.' );
+            
+            // Cleanup temp decrypted files
+            if ( ! empty( $state['temp_decrypted_files'] ) ) {
+                foreach ( $state['temp_decrypted_files'] as $f ) {
+                    if ( file_exists( $f ) ) {
+                        unlink( $f );
+                    }
+                }
+            }
         }
-
+        
         delete_option( $this->state_key() );
 
         return [ 'success' => true, 'message' => 'Wiederherstellung abgebrochen.' ];

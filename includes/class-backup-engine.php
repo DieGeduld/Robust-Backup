@@ -16,6 +16,7 @@ class WPRB_Backup_Engine {
     const PHASE_DB        = 'database';
     const PHASE_FILES     = 'files';
     const PHASE_COMPRESS  = 'compress';
+    const PHASE_ENCRYPT   = 'encrypt';
     const PHASE_UPLOAD    = 'upload';
     const PHASE_CLEANUP   = 'cleanup';
     const PHASE_DONE      = 'done';
@@ -185,9 +186,68 @@ class WPRB_Backup_Engine {
                 }
 
                 $state['all_files'] = $all_files;
-                $state['phase']     = self::PHASE_UPLOAD;
+                
+                // Transition to Encryption or Upload
+                if ( get_option( 'wprb_encryption_enabled' ) && get_option( 'wprb_encryption_key' ) ) {
+                    $state['phase'] = self::PHASE_ENCRYPT;
+                    $state['message'] = 'Komprimierung fertig. Starte Verschlüsselung...';
+                    $state['files_to_encrypt'] = $all_files;
+                    $state['encrypt_idx'] = 0;
+                } else {
+                    $state['phase'] = self::PHASE_UPLOAD;
+                    $state['message'] = 'Komprimierung fertig. Starte Upload...';
+                }
+                
                 $state['progress']  = 0;
-                $state['message']   = 'Komprimierung fertig. Starte Upload...';
+                break;
+
+            case self::PHASE_ENCRYPT:
+                $files = $state['files_to_encrypt'] ?? [];
+                $idx   = $state['encrypt_idx'] ?? 0;
+                $key   = get_option( 'wprb_encryption_key' );
+
+                if ( empty( $files ) || $idx >= count( $files ) ) {
+                    // All done
+                    // Update main file list with encrypted filenames
+                    // Need to rescan dir or assume .enc?
+                    $backup_dir = WPRB_BACKUP_DIR . $backup_id . '/';
+                    $final_files = [];
+                    foreach ( glob( $backup_dir . '*' ) as $file ) {
+                        $name = basename( $file );
+                        if ( is_file( $file ) && $name !== 'file_list.txt' && $name !== 'tar_batch.txt' ) {
+                            $final_files[] = $file;
+                        }
+                    }
+                    $state['all_files'] = $final_files;
+
+                    $state['phase']    = self::PHASE_UPLOAD;
+                    $state['progress'] = 0;
+                    $state['message']  = 'Verschlüsselung abgeschlossen. Starte Upload...';
+                    unset( $state['files_to_encrypt'], $state['encrypt_idx'] );
+                } else {
+                    $file = $files[ $idx ];
+                    $name = basename( $file );
+
+                    // Skip if already encrypted or metatata
+                    if ( substr( $name, -4 ) !== '.enc' && $name !== 'backup-meta.json' ) {
+                        $dest = $file . '.enc';
+                        
+                        $res = WPRB_Crypto::encrypt_file( $file, $dest, $key );
+                        
+                        if ( isset( $res['error'] ) ) {
+                            $state['errors'][] = "Verschlüsselung Fehler ($name): " . $res['error'];
+                            $this->log( "Verschlüsselung fehlgeschlagen für $name: " . $res['error'], 'ERROR' );
+                        } else {
+                            // Delete source
+                            unlink( $file );
+                            $this->log( "Datei verschlüsselt: $name -> " . basename( $dest ) );
+                        }
+                    }
+
+                    $state['encrypt_idx']++;
+                    $state['progress'] = round( ( $state['encrypt_idx'] / count( $files ) ) * 100 );
+                    $state['message']  = "Verschlüssle Datei " . ($idx + 1) . " von " . count($files) . "...";
+                }
                 break;
 
             case self::PHASE_UPLOAD:

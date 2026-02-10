@@ -25,6 +25,7 @@ define( 'WPRB_LOG_FILE', WPRB_BACKUP_DIR . 'backup.log' );
 require_once WPRB_PLUGIN_DIR . 'includes/class-logger.php';
 require_once WPRB_PLUGIN_DIR . 'includes/class-db-exporter.php';
 require_once WPRB_PLUGIN_DIR . 'includes/class-file-archiver.php';
+require_once WPRB_PLUGIN_DIR . 'includes/class-crypto.php';
 require_once WPRB_PLUGIN_DIR . 'includes/class-storage-manager.php';
 require_once WPRB_PLUGIN_DIR . 'includes/class-backup-engine.php';
 require_once WPRB_PLUGIN_DIR . 'includes/class-restore-engine.php';

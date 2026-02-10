@@ -207,6 +207,12 @@ class WPRB_Ajax_Handler {
             update_option( 'wprb_max_archive_size', max( 50, intval( $_POST['max_archive_size'] ?? 500 ) ) );
             update_option( 'wprb_exclude_dirs', sanitize_textarea_field( $_POST['exclude_dirs'] ?? '' ) );
             
+            // Encryption
+            update_option( 'wprb_encryption_enabled', ! empty( $_POST['encryption_enabled'] ) );
+            if ( isset( $_POST['encryption_key'] ) ) {
+                update_option( 'wprb_encryption_key', sanitize_text_field( $_POST['encryption_key'] ) );
+            }
+
             // Notifications
             update_option( 'wprb_email_notification_type', sanitize_text_field( $_POST['email_notification_type'] ?? 'none' ) );
             update_option( 'wprb_notification_email', sanitize_email( $_POST['notification_email'] ?? '' ) );

@@ -910,6 +910,31 @@ class WPRB_Admin_Page {
             <form id="wprb-settings-form">
                 <input type="hidden" name="tab" value="settings">
 
+                <!-- Encryption -->
+                <h3>Sicherheit & Verschlüsselung</h3>
+                <p>Schütze deine Backups mit einer AES-256 Verschlüsselung. Ohne das Passwort sind die Daten unlesbar.</p>
+                <table class="form-table">
+                    <tr>
+                        <th>Verschlüsselung aktivieren</th>
+                        <td>
+                            <label>
+                                <input type="checkbox" name="encryption_enabled" value="1" 
+                                       <?php checked( get_option( 'wprb_encryption_enabled', false ) ); ?>> 
+                                Backups verschlüsseln
+                            </label>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Passwort / Key</th>
+                        <td>
+                            <input type="password" name="encryption_key" class="regular-text" autocomplete="new-password"
+                                   value="<?php echo esc_attr( get_option( 'wprb_encryption_key', '' ) ); ?>">
+                            <p class="description">Dieses Passwort wird zum Verschlüsseln und Entschlüsseln benötigt. <strong>Gut aufbewahren!</strong></p>
+                            <button type="button" class="button button-secondary" onclick="var i=document.querySelector('[name=encryption_key]'); if(i.type==='password'){i.type='text';this.innerText='Verbergen';}else{i.type='password';this.innerText='Zeigen';}">Zeigen</button>
+                        </td>
+                    </tr>
+                </table>
+
                 <!-- Performance -->
                 <h3>Performance</h3>
                 <table class="form-table">

@@ -251,7 +251,30 @@
             }
         }
 
+        // Upload Stats Display
+        if (state.upload_stats && state.phase === 'upload') {
+            const stats = state.upload_stats;
+            // Only show if meaningful data
+            if (stats.uploaded_bytes > 0 && stats.total_bytes > 0) {
+                 const uploaded = sizeFormat(stats.uploaded_bytes);
+                 const total = sizeFormat(stats.total_bytes);
+                 const speed = stats.speed_formatted; // pre-formatted from PHP
+                 
+                 // Add to timeText or create new line? 
+                 // Let's add it to timeText with separator
+                 timeText += '<br><span style="color: #646970; font-size: 12px;">' + uploaded + ' von ' + total + ' (' + speed + ')</span>';
+            }
+        }
+        
         $('#wprb-progress-time').html(timeText);
+    }
+    
+    function sizeFormat(bytes) {
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     }
 
     function backupComplete(state) {

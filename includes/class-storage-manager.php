@@ -32,9 +32,10 @@ class WPRB_Storage_Manager {
             $state = [
                 'current_storage_index' => 0,
                 'current_file_index'    => 0,
-                'storage_states'        => [], // To keep track of storage-specific states (e.g. dropbox session)
+                'storage_states'        => [],
                 'results'               => [],
-                'phase_start_time'      => time(), // Rename to avoid confusion
+                'phase_start_time'      => time(),
+                'upload_start_time'     => microtime( true ), // Precise start time
             ];
             // Initialize results
             foreach ( $storages as $s ) {
@@ -50,21 +51,21 @@ class WPRB_Storage_Manager {
             
             // Check if we exceeded the time limit for this request
             if ( time() - $execution_start_time > $time_limit ) {
+                $stats = $this->calculate_upload_stats( $state, count( $storages ), $files );
+                $speed_msg = $stats['speed_formatted'] ? " (" . $stats['speed_formatted'] . ")" : "";
+                
                 return [
                     'done'     => false,
                     'state'    => $state,
-                    'message'  => 'Upload läuft...', 
-                    'progress' => $this->calculate_upload_progress( $state, count( $storages ), $files ),
+                    'message'  => 'Upload läuft...' . $speed_msg, 
+                    'progress' => $stats['progress'],
+                    'stats'    => $stats,
                 ];
             }
 
             $current_storage = $storages[ $state['current_storage_index'] ];
             $result = null;
 
-            // ... switch/case code is fine ... 
-            // I need to be careful not to cut it.
-            // I will target the caller update first.
-            
             switch ( $current_storage ) {
                 case 'local':
                     // Local is fast, do it in one go (but check if already done)
@@ -99,12 +100,18 @@ class WPRB_Storage_Manager {
                 // Reset file index/state for next storage
                 $state['current_file_index'] = 0;
                 unset( $state['current_upload_session'] );
+                unset( $state['dropbox_session'] );
+                unset( $state['gdrive_session'] );
             } else {
+                $stats = $this->calculate_upload_stats( $state, count( $storages ), $files );
+                $speed_msg = $stats['speed_formatted'] ? " (" . $stats['speed_formatted'] . ")" : "";
+
                 return [
                     'done'     => false,
                     'state'    => $state,
-                    'message'  => $result['message'] ?? 'Upload...',
-                    'progress' => $this->calculate_upload_progress( $state, count( $storages ), $files ),
+                    'message'  => ($result['message'] ?? 'Upload...') . $speed_msg,
+                    'progress' => $stats['progress'],
+                    'stats'    => $stats,
                 ];
             }
         }
@@ -114,43 +121,63 @@ class WPRB_Storage_Manager {
             'state'   => $state,
             'results' => $state['results'],
             'message' => 'Upload abgeschlossen.',
+            'progress' => 100,
         ];
     }
 
-    private function calculate_upload_progress( $state, $total_storages, $files ) {
-        if ( $total_storages === 0 ) return 100;
+    private function calculate_upload_stats( $state, $total_storages, $files ) {
+        if ( $total_storages === 0 ) return [ 'progress' => 100, 'speed' => 0, 'speed_formatted' => '' ];
         
         $total_files = count( $files );
+        $total_bytes_all_files = 0;
+        foreach ($files as $f) {
+            if (file_exists($f)) $total_bytes_all_files += filesize($f);
+        }
         
-        // 1. Storage Progress (which storage provider are we on?)
-        $storage_progress = $state['current_storage_index']; // e.g., 0 compeleted
+        $total_bytes_expected = $total_bytes_all_files * $total_storages;
         
-        // 2. File Progress (within current storage)
-        $file_progress = 0;
-        if ( $total_files > 0 ) {
-            $base_file_idx = $state['current_file_index'];
-            
-            // 3. Chunk Progress (within current file)
-            $chunk_percent = 0;
-            
-            // If we have an active dropbox session with offset, calculate chunk %
-            // Only if current file index is valid
-            if ( isset( $state['dropbox_session']['offset'] ) && isset( $files[ $base_file_idx ] ) ) {
-                $current_file = $files[ $base_file_idx ];
-                if ( file_exists( $current_file ) ) {
-                    $fsize = filesize( $current_file );
-                    if ( $fsize > 0 ) {
-                        $chunk_percent = $state['dropbox_session']['offset'] / $fsize;
-                    }
-                }
+        // Calculate uploaded bytes
+        $uploaded_bytes = 0;
+        
+        // 1. Completed storages
+        $uploaded_bytes += $state['current_storage_index'] * $total_bytes_all_files;
+        
+        // 2. Completed files in current storage
+        for ($i = 0; $i < $state['current_file_index']; $i++) {
+            if (isset($files[$i]) && file_exists($files[$i])) {
+                $uploaded_bytes += filesize($files[$i]);
             }
-            
-            $file_progress = ( $base_file_idx + $chunk_percent ) / $total_files;
+        }
+        
+        // 3. Current file progress (chunk)
+        if ( isset( $files[ $state['current_file_index'] ] ) ) {
+            // Check known session providers for offset
+            $offset = 0;
+            if ( isset( $state['dropbox_session']['offset'] ) ) {
+                $offset = $state['dropbox_session']['offset'];
+            } elseif ( isset( $state['gdrive_session']['offset'] ) ) {
+                $offset = $state['gdrive_session']['offset'];
+            }
+            $uploaded_bytes += $offset;
         }
 
-        $total_raw = ( $storage_progress + $file_progress ) / $total_storages;
+        // Percentage
+        $progress = ($total_bytes_expected > 0) ? ($uploaded_bytes / $total_bytes_expected) * 100 : 0;
         
-        return round( $total_raw * 100 );
+        // Speed
+        $start_time = $state['upload_start_time'] ?? microtime(true);
+        $elapsed = microtime(true) - $start_time;
+        if ($elapsed < 1) $elapsed = 1; // Avoid div by zero
+        
+        $speed = $uploaded_bytes / $elapsed; // bytes per second
+        
+        return [
+            'progress'        => round( $progress, 1 ),
+            'uploaded_bytes'  => $uploaded_bytes,
+            'total_bytes'     => $total_bytes_expected,
+            'speed'           => $speed,
+            'speed_formatted' => size_format( $speed ) . '/s',
+        ];
     }
 
     /**

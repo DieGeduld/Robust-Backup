@@ -240,12 +240,21 @@ class WPRB_Backup_Engine {
                     // Progress 0-100% for upload phase
                     $state['progress'] = $dist_result['progress'];
                 }
+
+                if ( isset( $dist_result['stats'] ) ) {
+                    $state['upload_stats'] = $dist_result['stats'];
+                }
                 
                 $state['message'] = $dist_result['message'];
 
                 if ( $dist_result['done'] ) {
                     $results = $dist_result['results'];
                     $upload_errors = false;
+                    
+                    // Clear stats on done
+                    unset( $state['upload_stats'] );
+                    // ... (rest of done logic)
+
 
                     foreach ( $results as $storage => $res ) {
                         if ( ! $res['success'] ) {
@@ -339,9 +348,10 @@ class WPRB_Backup_Engine {
             'message'  => $state['message'],
             'errors'   => $state['errors'] ?? [],
             'backup_id' => $state['backup_id'],
-            'type'     => $state['type'],
-            'elapsed'  => time() - ( $state['started_at'] ?? time() ),
+            'type'            => $state['type'],
+            'elapsed'         => time() - ( $state['started_at'] ?? time() ),
             'storage_results' => $state['storage_results'] ?? null,
+            'upload_stats'    => $state['upload_stats'] ?? null,
         ];
     }
 

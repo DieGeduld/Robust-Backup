@@ -73,9 +73,23 @@ class WRB_Crypto {
             // Remove padding on last chunk
             if ( $processed >= $ct_size ) {
                 $pad = ord( substr( $pt, -1 ) );
-                if ( $pad > 0 && $pad <= 16 ) {
-                    $pt = substr( $pt, 0, strlen($pt) - $pad );
+                
+                // PKCS7 padding must be between 1 and 16 bytes for AES
+                if ( $pad < 1 || $pad > 16 ) {
+                    fclose($fp_in); fclose($fp_out);
+                    return [ 'error' => 'Entschlüsselung fehlgeschlagen (Falsches Passwort oder beschädigte Datei)' ];
                 }
+
+                // Verify all padding bytes
+                $padding_content = substr( $pt, -$pad );
+                for ( $i = 0; $i < $pad; $i++ ) {
+                    if ( ord( $padding_content[$i] ) !== $pad ) {
+                        fclose($fp_in); fclose($fp_out);
+                        return [ 'error' => 'Entschlüsselung fehlgeschlagen (Falsches Passwort)' ];
+                    }
+                }
+                
+                $pt = substr( $pt, 0, strlen($pt) - $pad );
             }
 
             fwrite( $fp_out, $pt );

@@ -485,12 +485,47 @@ class WPRB_Admin_Page {
                                     ?>
                                 </td>
                                 <td>
+
                                     <?php foreach ( $backup['files'] as $file ) : ?>
-                                        <a href="<?php echo esc_url( $file['url'] ); ?>" class="wprb-file-link" title="Download: <?php echo esc_attr( $file['name'] ); ?>">
-                                            <span class="dashicons dashicons-download"></span>
-                                            <?php echo esc_html( $file['name'] ); ?>
-                                            <small>(<?php echo esc_html( $file['size'] ); ?>)</small>
-                                        </a><br>
+                                        <div class="wprb-file-item" style="margin-bottom: 4px;">
+                                            <strong style="display:inline-block; min-width: 180px;">
+                                                <span class="dashicons dashicons-media-default" style="color:#888;"></span>
+                                                <?php echo esc_html( $file['name'] ); ?> 
+                                                <small style="font-weight: normal; color: #666;">(<?php echo esc_html( $file['size'] ); ?>)</small>
+                                            </strong>
+                                            
+                                            <?php 
+                                            if ( ! empty( $file['downloads'] ) ) {
+                                                echo '<span class="wprb-download-actions" style="white-space: nowrap;">';
+                                                foreach ( $file['downloads'] as $store => $url ) {
+                                                    $icon = 'dashicons-download';
+                                                    $title = 'Download';
+                                                    if ( $store === 'local' ) { $icon = 'dashicons-desktop'; $title = 'Lokal'; }
+                                                    elseif ( $store === 'dropbox' ) { $icon = 'dashicons-dropbox'; $title = 'Dropbox'; }
+                                                    elseif ( $store === 'gdrive' ) { $icon = 'dashicons-google'; $title = 'Google Drive'; }
+                                                    elseif ( $store === 'sftp' ) { $icon = 'dashicons-admin-network'; $title = 'SFTP'; }
+                                                    
+                                                    printf( 
+                                                        '<a href="%s" class="button button-small" title="%s" style="margin-left: 2px; padding: 0 4px;">
+                                                            <span class="dashicons %s" style="line-height: 26px;"></span>
+                                                        </a>',
+                                                        esc_url( $url ),
+                                                        esc_attr( $title ),
+                                                        esc_attr( $icon )
+                                                    );
+                                                }
+                                                echo '</span>';
+                                            } elseif ( ! empty( $file['url'] ) ) {
+                                                // Fallback for previous structure if any
+                                                 printf( 
+                                                    '<a href="%s" class="button button-small" title="Download">
+                                                        <span class="dashicons dashicons-download" style="line-height: 26px;"></span>
+                                                    </a>',
+                                                    esc_url( $file['url'] )
+                                                );
+                                            }
+                                            ?>
+                                        </div>
                                     <?php endforeach; ?>
                                 </td>
                                 <td>

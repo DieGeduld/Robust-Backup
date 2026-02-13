@@ -394,13 +394,14 @@ class WPRB_Storage_Manager {
     }
 
     /**
-     * Get download URL for a backup file.
+     * Get download URL for a backup file from a specific storage.
      */
-    public function get_download_url( $backup_id, $filename ) {
+    public function get_download_url( $backup_id, $filename, $storage = 'local' ) {
         return add_query_arg( [
             'action'    => 'wprb_download',
             'backup_id' => sanitize_file_name( $backup_id ),
-            'file'      => sanitize_file_name( $filename ),
+            'file'      => basename( $filename ), // match disk name exactly
+            'storage'   => sanitize_text_field( $storage ),
             '_wpnonce'  => wp_create_nonce( 'wprb_download_' . $backup_id ),
         ], admin_url( 'admin-ajax.php' ) );
     }
@@ -414,24 +415,46 @@ class WPRB_Storage_Manager {
         }
 
         $backup_id = sanitize_file_name( $_GET['backup_id'] ?? '' );
-        $filename  = sanitize_file_name( $_GET['file'] ?? '' );
+        // Use basename to preserve characters like spaces, but prevent traversal
+        $filename  = basename( $_GET['file'] ?? '' );
+        $storage   = sanitize_text_field( $_GET['storage'] ?? 'local' );
         $nonce     = $_GET['_wpnonce'] ?? '';
 
         if ( ! wp_verify_nonce( $nonce, 'wprb_download_' . $backup_id ) ) {
             wp_die( 'Invalid nonce' );
         }
 
+        // 1. Dropbox
+        if ( $storage === 'dropbox' ) {
+            $link = $this->get_dropbox_temp_link( $backup_id, $filename );
+            if ( $link ) {
+                wp_redirect( $link );
+                exit;
+            }
+            wp_die( 'Die Datei wurde in Dropbox nicht gefunden. Möglicherweise wurde der Ordner verschoben oder gelöscht.' );
+        }
+
+        // 2. Google Drive
+        if ( $storage === 'gdrive' ) {
+             $link = $this->get_gdrive_temp_link( $backup_id, $filename );
+             if ( $link ) {
+                 wp_redirect( $link );
+                 exit;
+             }
+             wp_die( 'Konnte Google Drive Link nicht abrufen.' );
+        }
+
+        // 3. SFTP
+        if ( $storage === 'sftp' ) {
+             $this->stream_sftp_file( $backup_id, $filename );
+             exit;
+        }
+
+        // 4. Local (Default)
         $filepath = WPRB_BACKUP_DIR . $backup_id . '/' . $filename;
 
         if ( ! file_exists( $filepath ) ) {
-            // Check if we can get a temporary link from Dropbox
-            $tmp_link = $this->get_dropbox_temp_link( $backup_id, $filename );
-            if ( $tmp_link ) {
-                wp_redirect( $tmp_link );
-                exit;
-            }
-
-            wp_die( 'File not found locally and could not be retrieved from cloud.' );
+            wp_die( 'Datei lokal nicht gefunden.' );
         }
 
         // Stream the file
@@ -470,35 +493,230 @@ class WPRB_Storage_Manager {
         if ( ! $access_token ) return false;
 
         $folder_name = $this->get_storage_folder_name();
-        $source_path = '/' . $folder_name . '/' . $backup_id . '/' . $filename;
+        
+        // Potential paths to try
+        $paths_to_try = [
+            '/' . $folder_name . '/' . $backup_id . '/' . $filename, // Standard
+            '/WP-Backups/' . $backup_id . '/' . $filename,           // Legacy
+            '/' . $backup_id . '/' . $filename,                      // Root backup
+        ];
 
+        foreach ( $paths_to_try as $path ) {
+            $res = $this->dropbox_get_link_for_path( $access_token, $path );
+            if ( $res['success'] ) {
+                return $res['link'];
+            }
+        }
+
+        // Deep Search: If direct paths fail, search for the file inside the backup folder (if we can guess the folder)
+        // Let's try to list files in the expected backup folder and find a match
+        $search_folders = [ '/' . $folder_name . '/' . $backup_id, '/WP-Backups/' . $backup_id ];
+        
+        foreach ( $search_folders as $folder ) {
+            $found_path = $this->dropbox_search_file_in_folder( $access_token, $folder, $filename );
+            if ( $found_path ) {
+                 $res = $this->dropbox_get_link_for_path( $access_token, $found_path );
+                 if ( $res['success'] ) return $res['link'];
+            }
+        }
+
+        return false;
+    }
+
+    private function dropbox_get_link_for_path( $access_token, $path ) {
         $response = wp_remote_post( 'https://api.dropboxapi.com/2/files/get_temporary_link', [
+            'timeout' => 15,
+            'headers' => [
+                'Authorization' => 'Bearer ' . $access_token,
+                'Content-Type'  => 'application/json',
+            ],
+            'body' => wp_json_encode( [ 'path' => $path ] ),
+        ] );
+
+        if ( is_wp_error( $response ) ) {
+            return [ 'success' => false, 'error' => 'HTTP Error: ' . $response->get_error_message() ];
+        }
+
+        $code = wp_remote_retrieve_response_code( $response );
+        $body = json_decode( wp_remote_retrieve_body( $response ), true );
+        
+        if ( $code === 200 && isset( $body['link'] ) ) {
+            return [ 'success' => true, 'link' => $body['link'] ];
+        }
+        
+        $error_summary = $body['error_summary'] ?? 'Unknown API Error';
+        return [ 'success' => false, 'error' => $error_summary ];
+    }
+
+    private function dropbox_list_folders( $access_token, $path = '' ) {
+        $response = wp_remote_post( 'https://api.dropboxapi.com/2/files/list_folder', [
             'timeout' => 30,
             'headers' => [
                 'Authorization' => 'Bearer ' . $access_token,
                 'Content-Type'  => 'application/json',
             ],
-            'body' => wp_json_encode( [ 'path' => $source_path ] ),
+            'body' => wp_json_encode( [ 
+                'path' => $path, // Empty string for root
+                'recursive' => false,
+                'include_media_info' => false
+            ] ),
         ] );
 
         if ( is_wp_error( $response ) || wp_remote_retrieve_response_code( $response ) !== 200 ) {
-             // Try legacy path
-             $source_path_legacy = '/WP-Backups/' . $backup_id . '/' . $filename;
-             $response = wp_remote_post( 'https://api.dropboxapi.com/2/files/get_temporary_link', [
-                'headers' => [
-                    'Authorization' => 'Bearer ' . $access_token,
-                    'Content-Type'  => 'application/json',
-                ],
-                'body' => wp_json_encode( [ 'path' => $source_path_legacy ] ),
-             ] );
+             return false;
         }
 
-        if ( ! is_wp_error( $response ) && wp_remote_retrieve_response_code( $response ) === 200 ) {
-            $body = json_decode( wp_remote_retrieve_body( $response ), true );
-            return $body['link'] ?? false;
+        $body = json_decode( wp_remote_retrieve_body( $response ), true );
+        $entries = $body['entries'] ?? [];
+        $folders = [];
+        foreach ( $entries as $entry ) {
+            // Collect folders and maybe files if useful, but folders are main interest
+            if ( $entry['.tag'] === 'folder' ) {
+                $folders[] = $entry['path_display']; // Use path_display for better readability
+            }
+        }
+        return $folders;
+    }
+
+
+
+    private function dropbox_search_file_in_folder( $access_token, $folder, $filename ) {
+        $response = wp_remote_post( 'https://api.dropboxapi.com/2/files/list_folder', [
+            'timeout' => 30,
+            'headers' => [
+                'Authorization' => 'Bearer ' . $access_token,
+                'Content-Type'  => 'application/json',
+            ],
+            'body' => wp_json_encode( [ 
+                'path' => $folder,
+                'recursive' => false,
+                'include_media_info' => false
+            ] ),
+        ] );
+
+        if ( is_wp_error( $response ) || wp_remote_retrieve_response_code( $response ) !== 200 ) {
+             return false;
         }
 
+        $body = json_decode( wp_remote_retrieve_body( $response ), true );
+        $entries = $body['entries'] ?? [];
+        
+        foreach ( $entries as $entry ) {
+            if ( $entry['.tag'] === 'file' && $entry['name'] === $filename ) {
+                return $entry['path_lower']; // or path_display
+            }
+        }
+        
         return false;
+    }
+
+    private function get_gdrive_temp_link( $backup_id, $filename ) {
+        $token = get_option( 'wprb_gdrive_token', '' );
+        if ( empty( $token ) ) return false;
+        
+        $token_data = json_decode( $token, true );
+        $access_token = $this->gdrive_refresh_token( $token_data );
+        if ( ! $access_token ) return false;
+
+        // 1. Find file ID
+        // We need to traverse: Root -> Backup Folder -> File
+        $folder_name = 'WP-Backup-' . $this->get_storage_folder_name();
+        $root_id     = $this->gdrive_get_folder_id( $access_token, $folder_name );
+        
+        if ( ! $root_id ) return false;
+        
+        $backup_folder_id = $this->gdrive_get_folder_id( $access_token, $backup_id, $root_id );
+        if ( ! $backup_folder_id ) return false;
+        
+        // Find file
+        $query = "name = '" . str_replace( "'", "\'", $filename ) . "' and '" . $backup_folder_id . "' in parents and trashed = false";
+        $url   = 'https://www.googleapis.com/drive/v3/files?q=' . urlencode( $query ) . '&fields=files(id,webContentLink)';
+        
+        $response = wp_remote_get( $url, [
+            'timeout' => 30,
+            'headers' => [ 'Authorization' => 'Bearer ' . $access_token ],
+        ] );
+        
+        if ( is_wp_error( $response ) || wp_remote_retrieve_response_code( $response ) !== 200 ) return false;
+        
+        $body = json_decode( wp_remote_retrieve_body( $response ), true );
+        if ( empty( $body['files'] ) ) return false;
+        
+        // Return webContentLink (direct download) if available, or fallback
+        $file_id = $body['files'][0]['id'];
+        
+        // Ensure the file is downloadable
+        return $body['files'][0]['webContentLink'] ?? 'https://drive.google.com/uc?id=' . $file_id . '&export=download';
+    }
+
+    private function stream_sftp_file( $backup_id, $filename ) {
+        $host  = get_option( 'wprb_sftp_host' );
+        $user  = get_option( 'wprb_sftp_user' );
+        $port  = (int) get_option( 'wprb_sftp_port', 22 );
+        $pass  = get_option( 'wprb_sftp_pass' );
+        $path  = get_option( 'wprb_sftp_path', '/' );
+        $proto = get_option( 'wprb_sftp_proto', 'sftp' );
+
+        $remote_path = rtrim( $path, '/' ) . '/' . $this->get_storage_folder_name() . '/' . $backup_id . '/' . $filename;
+
+        // Handle FTP
+        if ( $proto === 'ftp' ) {
+            if ( ! function_exists( 'ftp_connect' ) ) wp_die( 'FTP Extension missing' );
+            
+            $conn_id = ftp_connect( $host, $port );
+            if ( ! $conn_id ) wp_die( 'FTP Connection failed' );
+            if ( ! @ftp_login( $conn_id, $user, $pass ) ) wp_die( 'FTP Auth failed' );
+            
+            ftp_pasv( $conn_id, true );
+            
+            $size = ftp_size( $conn_id, $remote_path );
+            
+            header( 'Content-Description: File Transfer' );
+            header( 'Content-Type: application/octet-stream' );
+            header( 'Content-Disposition: attachment; filename="' . $filename . '"' );
+            header( 'Content-Transfer-Encoding: binary' );
+            if ( $size != -1 ) header( 'Content-Length: ' . $size );
+            header( 'Cache-Control: must-revalidate' );
+            header( 'Pragma: public' );
+            
+            if ( ob_get_level() ) ob_end_clean();
+            
+            $out = fopen( 'php://output', 'w' );
+            ftp_fget( $conn_id, $out, $remote_path, FTP_BINARY );
+            fclose( $out );
+            ftp_close( $conn_id );
+            exit;
+        }
+        
+        // Handle SFTP (Default)
+        if ( ! function_exists( 'ssh2_connect' ) ) wp_die( 'SFTP Extension missing' );
+        
+        $connection = ssh2_connect( $host, $port );
+        if ( ! $connection ) wp_die( 'SFTP Connection failed' );
+        if ( ! ssh2_auth_password( $connection, $user, $pass ) ) wp_die( 'SFTP Auth failed' );
+        
+        $sftp = ssh2_sftp( $connection );
+        
+        $stream_path = "ssh2.sftp://$sftp" . $remote_path;
+        
+        if ( ! file_exists( $stream_path ) ) wp_die( 'File not found on SFTP' );
+        
+        $size = filesize( $stream_path );
+        
+        header( 'Content-Description: File Transfer' );
+        header( 'Content-Type: application/octet-stream' );
+        header( 'Content-Disposition: attachment; filename="' . $filename . '"' );
+        header( 'Content-Transfer-Encoding: binary' );
+        if ( $size ) header( 'Content-Length: ' . $size );
+        header( 'Cache-Control: must-revalidate' );
+        header( 'Pragma: public' );
+        
+        if ( ob_get_level() ) ob_end_clean();
+        
+        $fh = fopen( $stream_path, 'rb' );
+        fpassthru( $fh );
+        fclose( $fh );
+        exit;
     }
 
     // ─────────────────────────────────────────────
@@ -1330,7 +1548,6 @@ class WPRB_Storage_Manager {
                     $file_info[] = [
                         'name' => $cur_file['name'],
                         'size' => size_format( $cur_file['size'] ),
-                        'url'  => $this->get_download_url( $backup_id, $cur_file['name'] ),
                         'missing' => true,
                     ];
                 }
@@ -1341,7 +1558,6 @@ class WPRB_Storage_Manager {
                     $file_info[] = [
                         'name' => $filename,
                         'size' => 'Cloud',
-                        'url'  => $this->get_download_url( $backup_id, $filename ),
                         'missing' => true,
                     ];
                 }
@@ -1353,7 +1569,7 @@ class WPRB_Storage_Manager {
                         $file_info[] = [
                             'name' => basename( $file ),
                             'size' => size_format( $fsize ),
-                            'url'  => $this->get_download_url( $backup_id, basename( $file ) ),
+                            // 'url' will be populated later based on storages
                         ];
                     }
                 }
@@ -1364,6 +1580,27 @@ class WPRB_Storage_Manager {
                  // Fallback for old backups
                  $storages = $is_local_deleted ? ['cloud'] : ['local'];
             }
+
+            // Enrich file info with download links per storage
+            foreach ( $file_info as &$f_item ) {
+                $links = [];
+                // 1. Local
+                if ( ! $is_local_deleted ) {
+                     $links['local'] = $this->get_download_url( $backup_id, $f_item['name'], 'local' );
+                }
+                // 2. Others
+                foreach ( $storages as $st ) {
+                    if ( $st !== 'local' && $st !== 'cloud' ) {
+                         $links[ $st ] = $this->get_download_url( $backup_id, $f_item['name'], $st );
+                    }
+                    if ( $st === 'cloud' && $is_local_deleted ) {
+                         // guess cloud means dropbox in old version
+                         $links['dropbox'] = $this->get_download_url( $backup_id, $f_item['name'], 'dropbox' );
+                    }
+                }
+                $f_item['downloads'] = $links;
+            }
+            unset($f_item); // break ref
 
             $backups[] = [
                 'id'            => $backup_id,

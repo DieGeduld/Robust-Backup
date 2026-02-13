@@ -147,11 +147,21 @@ class WRB_Installer {
                 $pass = $_POST['pass'];
                 $name = $_POST['name'];
 
-                $mysqli = @new mysqli( $host, $user, $pass, $name );
-                if ( $mysqli->connect_error ) {
-                    wp_send_json_error( 'Connection failed: ' . $mysqli->connect_error );
+                try {
+                    // Turn on exceptions, so we can catch them reliably (PHP 8 mode)
+                    mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+                    $mysqli = new mysqli( $host, $user, $pass, $name );
+                    wp_send_json_success( 'Verbindung erfolgreich hergestellt!' );
+                } catch ( Exception $e ) {
+                    $code = $e->getCode();
+                    $msg  = 'Verbindung fehlgeschlagen: ' . $e->getMessage() . ' (Code: ' . $code . ')';
+
+                    if ( $code == 1045 ) $msg = 'Zugriff verweigert (Benutzername oder Passwort falsch).';
+                    if ( $code == 1049 ) $msg = 'Datenbank "' . htmlspecialchars($name) . '" existiert nicht.';
+                    if ( $code == 2002 ) $msg = 'Konnte nicht zum Datenbank-Host verbinden. (Host falsch?)';
+
+                    wp_send_json_error( $msg );
                 }
-                wp_send_json_success( 'Connected successfully!' );
                 break;
 
             case 'restore_db':
@@ -181,11 +191,14 @@ class WRB_Installer {
 
         if ( ! file_exists( $file ) ) wp_send_json_error( 'SQL File not found: ' . $file );
 
-        $mysqli = @new mysqli( $host, $user, $pass, $name );
-        if ( $mysqli->connect_error ) wp_send_json_error( 'DB Connection failed' );
-
-        $mysqli->set_charset( 'utf8mb4' );
-        $mysqli->query( "SET FOREIGN_KEY_CHECKS = 0" );
+        try {
+            mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+            $mysqli = new mysqli( $host, $user, $pass, $name );
+            $mysqli->set_charset( 'utf8mb4' );
+            $mysqli->query( "SET FOREIGN_KEY_CHECKS = 0" );
+        } catch ( Exception $e ) {
+            wp_send_json_error( 'DB Fehler: ' . $e->getMessage() );
+        }
 
         // Stream file
         $fh = fopen( $file, 'r' );
@@ -277,6 +290,30 @@ class WRB_Installer {
     }
 
     public function render() {
+        // Auto-detect ready state
+        $step1_class = 'step active';
+        $step3_class = 'step';
+        
+        $files_all = array_values( $this->files );
+        $enc_files = array_filter( $files_all, function( $f ) { return substr( $f, -4 ) === '.enc'; } );
+        $has_encrypted = ! empty( $enc_files );
+        $needs_decryption = false;
+        
+        if ( $has_encrypted ) {
+            foreach ( $enc_files as $enc ) {
+                $target = substr( $enc, 0, -4 );
+                if ( ! in_array( $target, $files_all ) ) {
+                    $needs_decryption = true;
+                    break;
+                }
+            }
+            
+            // If we have encrypted files but all are already decrypted, skip to Step 3
+            if ( ! $needs_decryption ) {
+                $step1_class = 'step';
+                $step3_class = 'step active';
+            }
+        }
         ?>
 <!DOCTYPE html>
 <html lang="de">
@@ -320,7 +357,7 @@ class WRB_Installer {
     <div class="content">
         
         <!-- Step 1: Welcome & Checks -->
-        <div id="step-1" class="step active">
+        <div id="step-1" class="<?php echo $step1_class; ?>">
             <h2>1. Backup Dateien prüfen</h2>
             <p>Willkommen! Dieses Script hilft dir, deine WordPress-Seite wiederherzustellen. Folgende Dateien wurden gefunden:</p>
             
@@ -361,7 +398,7 @@ class WRB_Installer {
         </div>
 
         <!-- Step 3: Database -->
-        <div id="step-db" class="step">
+        <div id="step-db" class="<?php echo $step3_class; ?>">
             <h2>3. Datenbank Verbindung</h2>
             <p>Bitte gib die Zugangsdaten für die neue Datenbank ein:</p>
             
@@ -401,7 +438,7 @@ class WRB_Installer {
             <p style="color: green; font-weight: bold; font-size: 18px;">Deine Seite wurde erfolgreich wiederhergestellt.</p>
             <p>Es wird empfohlen, die Installationsdateien (Kickstart + Backups) zu löschen.</p>
             
-            <button class="btn" onclick="cleanup()">Dateien löschen & zur Seite</button>
+            <buttonAha class="btn" onclick="cleanup()">Dateien löschen & zur Seite</button>
             <a href="/" class="btn btn-secondary" style="margin-left: 10px;">Ohne Löschen zur Seite</a>
         </div>
 

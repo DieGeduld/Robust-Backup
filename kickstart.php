@@ -147,6 +147,10 @@ class WRB_Installer {
                 $pass = $_POST['pass'];
                 $name = $_POST['name'];
 
+                if ( empty( $name ) ) {
+                    wp_send_json_error( 'Bitte Datenbank-Name angeben.' );
+                }
+
                 try {
                     // Turn on exceptions, so we can catch them reliably (PHP 8 mode)
                     mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
@@ -179,6 +183,14 @@ class WRB_Installer {
             case 'cleanup':
                 $this->cleanup();
                 break;
+
+            case 'get_site_data':
+                $this->get_site_data();
+                break;
+
+            case 'update_site_data':
+                $this->update_site_data();
+                break;
         }
     }
 
@@ -187,6 +199,9 @@ class WRB_Installer {
         $user = $_POST['user'];
         $pass = $_POST['pass'];
         $name = $_POST['name'];
+        
+        if ( empty( $name ) ) wp_send_json_error( 'Kein Datenbank-Name angegeben.' );
+        
         $file = $_POST['file'] ?? 'database.sql'; // Decrypted file
 
         if ( ! file_exists( $file ) ) wp_send_json_error( 'SQL File not found: ' . $file );
@@ -287,6 +302,70 @@ class WRB_Installer {
          @unlink( __FILE__ );
          
          wp_send_json_success();
+    }
+
+    private function get_site_data() {
+        $host = $_POST['host'];
+        $user = $_POST['user'];
+        $pass = $_POST['pass'];
+        $name = $_POST['name'];
+
+        try {
+            mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+            $mysqli = new mysqli( $host, $user, $pass, $name );
+            
+            // Detect Prefix
+            $res = $mysqli->query( "SHOW TABLES LIKE '%options'" );
+            $row = $res->fetch_row(); // e.g. wp_options
+            
+            if ( ! $row ) wp_send_json_error( 'Tabelle *_options nicht gefunden.' );
+            
+            $options_table = $row[0];
+            $prefix = substr( $options_table, 0, -7 ); // remove 'options'
+            
+            // Get SiteURL
+            $res = $mysqli->query( "SELECT option_value FROM {$options_table} WHERE option_name = 'siteurl'" );
+            $row = $res->fetch_row();
+            $siteurl = $row ? $row[0] : '';
+            
+            wp_send_json_success( [ 'prefix' => $prefix, 'siteurl' => $siteurl ] );
+            
+        } catch ( Exception $e ) {
+            wp_send_json_error( $e->getMessage() );
+        }
+    }
+
+    private function update_site_data() {
+        $host = $_POST['host'];
+        $user = $_POST['user'];
+        $pass = $_POST['pass'];
+        $name = $_POST['name'];
+        $prefix = $_POST['prefix']; // trusted from client or re-detected? Client is fine here.
+        
+        $new_url = rtrim( $_POST['new_url'], '/' );
+        $do_url  = $_POST['do_url'] === 'true';
+        $do_htaccess = $_POST['do_htaccess'] === 'true';
+
+        try {
+            $mysqli = new mysqli( $host, $user, $pass, $name );
+            
+            if ( $do_url ) {
+                $options = $prefix . 'options';
+                $stmt = $mysqli->prepare( "UPDATE {$options} SET option_value = ? WHERE option_name IN ('siteurl', 'home')" );
+                $stmt->bind_param( 's', $new_url );
+                $stmt->execute();
+            }
+
+            if ( $do_htaccess ) {
+                $htaccess = "# BEGIN WordPress\n<IfModule mod_rewrite.c>\nRewriteEngine On\nRewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]\nRewriteBase /\nRewriteRule ^index\.php$ - [L]\nRewriteCond %{REQUEST_FILENAME} !-f\nRewriteCond %{REQUEST_FILENAME} !-d\nRewriteRule . /index.php [L]\n</IfModule>\n# END WordPress";
+                file_put_contents( '.htaccess', $htaccess );
+            }
+
+            wp_send_json_success();
+
+        } catch ( Exception $e ) {
+            wp_send_json_error( $e->getMessage() );
+        }
     }
 
     public function render() {
@@ -432,13 +511,43 @@ class WRB_Installer {
             <div id="res-log" class="log"></div>
         </div>
         
-        <!-- Step 5: Done -->
+        <!-- Step 5: Configuration -->
+        <div id="step-config" class="step">
+            <h2>5. Konfiguration anpassen</h2>
+            <p>Die Datenbank ist importiert. Soll die Konfiguration angepasst werden?</p>
+            
+            <div class="form-group" id="url-config-box">
+                <label>Gefundene alte Seite (Site URL)</label>
+                <input type="text" id="old-url" readonly style="background: #eee; color: #666;">
+            </div>
+            
+            <div class="form-group">
+                <label>Neue URL (Diese Umgebung)</label>
+                <input type="text" id="new-url">
+            </div>
+
+            <div style="margin-bottom: 20px;">
+                <label style="display: block; margin-bottom: 10px;">
+                    <input type="checkbox" id="chk-update-url" checked> 
+                    <strong>URLs in Datenbank aktualisieren</strong> (siteurl & home)
+                </label>
+                <label style="display: block;">
+                    <input type="checkbox" id="chk-htaccess" checked> 
+                    <strong>.htaccess neu erstellen</strong> (Korrigiert Permalinks)
+                </label>
+            </div>
+
+            <button class="btn" onclick="finishConfig()">Einstellungen anwenden & Fertigstellen</button>
+            <button class="btn btn-secondary" onclick="skipConfig()">Überspringen</button>
+        </div>
+
+        <!-- Step 6: Done -->
         <div id="step-done" class="step">
-            <h2>5. Fertig!</h2>
+            <h2>6. Fertig!</h2>
             <p style="color: green; font-weight: bold; font-size: 18px;">Deine Seite wurde erfolgreich wiederhergestellt.</p>
             <p>Es wird empfohlen, die Installationsdateien (Kickstart + Backups) zu löschen.</p>
             
-            <buttonAha class="btn" onclick="cleanup()">Dateien löschen & zur Seite</button>
+            <button class="btn" onclick="cleanup()">Dateien löschen & zur Seite</button>
             <a href="/" class="btn btn-secondary" style="margin-left: 10px;">Ohne Löschen zur Seite</a>
         </div>
 
@@ -450,6 +559,7 @@ let files = <?php echo json_encode( array_values( $this->files ) ); ?>;
 let hasEncrypted = files.some( f => f.endsWith('.enc') );
 let decryptedFiles = [];
 let dbConfig = {};
+let dbPrefix = 'wp_';
 
 document.addEventListener('DOMContentLoaded', () => {
     if ( hasEncrypted ) {
@@ -529,7 +639,7 @@ async function testDB() {
     dbConfig = {
         host: document.getElementById('db-host').value,
         name: document.getElementById('db-name').value,
-        user: document.getElementById('db-user').value,
+        user: document.getElementById('db-user').value || 'root',
         pass: document.getElementById('db-pass').value
     };
     
@@ -545,6 +655,19 @@ async function testDB() {
 }
 
 async function startRestore() {
+    // Refresh Config from inputs to be safe
+    dbConfig = {
+        host: document.getElementById('db-host').value,
+        name: document.getElementById('db-name').value,
+        user: document.getElementById('db-user').value || 'root',
+        pass: document.getElementById('db-pass').value
+    };
+
+    if ( ! dbConfig.name ) {
+        alert('Bitte Datenbank-Name angeben.');
+        return;
+    }
+
     showStep('step-restore');
     
     // 1. Import DB
@@ -601,7 +724,54 @@ async function startRestore() {
     await ajax( 'update_config', dbConfig );
     
     document.getElementById('res-bar').style.width = '100%';
-    setTimeout( () => showStep('step-done'), 1000 );
+    
+    // Proceed to Config
+    setTimeout( () => prepareConfig(), 1000 );
+}
+
+async function prepareConfig() {
+    showStep('step-config');
+    
+    // Suggest current URL
+    let currentUrl = window.location.protocol + '//' + window.location.host + window.location.pathname;
+    // remote kickstart.php from path
+    currentUrl = currentUrl.substring(0, currentUrl.lastIndexOf('/'));
+    document.getElementById('new-url').value = currentUrl;
+    
+    // Fetch Old
+    try {
+        let res = await ajax('get_site_data', dbConfig);
+        if ( res.success ) {
+            document.getElementById('old-url').value = res.data.siteurl;
+            dbPrefix = res.data.prefix;
+        } else {
+            console.error( res.data );
+        }
+    } catch(e) {
+        console.error(e);
+    }
+}
+
+async function finishConfig() {
+    let updateUrl = document.getElementById('chk-update-url').checked;
+    let updateHt  = document.getElementById('chk-htaccess').checked;
+    let newUrl    = document.getElementById('new-url').value;
+    
+    if ( updateUrl || updateHt ) {
+        await ajax('update_site_data', {
+            ...dbConfig,
+            prefix: dbPrefix,
+            new_url: newUrl,
+            do_url: updateUrl,
+            do_htaccess: updateHt
+        });
+    }
+    
+    showStep('step-done');
+}
+
+function skipConfig() {
+    showStep('step-done');
 }
 
 async function cleanup() {

@@ -187,7 +187,13 @@ class WRB_Installer {
                 $dest = basename( $file, '.enc' );
                 
                 $res = WRB_Crypto::decrypt_file( $file, $dest, $pass );
-                if ( isset( $res['error'] ) ) wp_send_json_error( $res['error'] );
+                if ( isset( $res['error'] ) ) {
+                     // Delete potential partial file
+                     if ( file_exists( $dest ) ) {
+                         @unlink( $dest );
+                     }
+                     wp_send_json_error( $res['error'] );
+                }
                 
                 // Add decrypted file to list check
                 wp_send_json_success( [ 'file' => $dest ] );

@@ -5,95 +5,61 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class WPRB_Crypto {
 
-    const METHOD = 'aes-256-cbc';
-    const CHUNK_SIZE = 1048576; // 1MB chunks (must be multiple of 16 for efficiency)
+    // V2 Constants (GCM)
+    const CIPHER = 'aes-256-gcm';
+    const KDF_ALGO = 'sha256';
+    const KDF_ITERATIONS = 600000;
+    const CHUNK_SIZE = 1048576; // 1MB
+    const TAG_LENGTH = 16;
+    const IV_LENGTH = 12;
+    const SALT_LENGTH = 32;
+
+    // V1 Constants (Legacy)
+    const V1_METHOD = 'aes-256-cbc';
 
     /**
-     * Encrypt a file using AES-256-CBC with manual chunking.
-     * 
-     * @param string $source_path      Input file path
-     * @param string $dest_path        Output file path
-     * @param string $passphrase       User password
-     * @return array|bool Result array or false on failure
+     * Encrypt a file using AES-256-GCM (V2 Secure Standard).
      */
     public static function encrypt_file( $source_path, $dest_path, $passphrase ) {
-        if ( ! file_exists( $source_path ) ) {
-            return [ 'error' => 'Source file not found' ];
-        }
-
-        if ( empty( $passphrase ) ) {
-            return [ 'error' => 'No passphrase provided for encryption.' ];
-        }
-
-        $salt = openssl_random_pseudo_bytes( 16 );
-        $iv   = openssl_random_pseudo_bytes( 16 );
-        
-        // Derive key: PBKDF2 with 10k iterations
-        $key = hash_pbkdf2( 'sha256', $passphrase, $salt, 10000, 32, true );
+        if ( ! file_exists( $source_path ) ) return [ 'error' => 'Source file not found' ];
+        if ( empty( $passphrase ) ) return [ 'error' => 'No passphrase provided.' ];
 
         $fp_in  = fopen( $source_path, 'rb' );
         $fp_out = fopen( $dest_path, 'wb' );
 
-        if ( ! $fp_in || ! $fp_out ) {
-            return [ 'error' => 'File IO error' ];
-        }
+        if ( ! $fp_in || ! $fp_out ) return [ 'error' => 'File IO error' ];
 
-        // Write Header: Magic(4) + Version(1) + Salt(16) + IV(16)
-        // Magic = WPRB
-        fwrite( $fp_out, 'WPRB' . pack('C', 1) . $salt . $iv );
+        // Header: Magic(4) + Version(1)
+        fwrite( $fp_out, 'WPRB' . chr(2) );
 
-        $current_iv = $iv;
+        // Salt (32 bytes)
+        $salt = random_bytes( self::SALT_LENGTH );
+        fwrite( $fp_out, $salt );
+
+        // Derive Key
+        $key = hash_pbkdf2( self::KDF_ALGO, $passphrase, $salt, self::KDF_ITERATIONS, 32, true );
+
+        $chunk_idx = 0;
         
-        // Get file size to handle padding on last chunk
-        $fsize = filesize( $source_path );
-        $processed = 0;
-
-        while ( ! feof( $fp_in ) && $processed < $fsize ) {
-            // Read up to CHUNK_SIZE
+        while ( ! feof( $fp_in ) ) {
             $chunk = fread( $fp_in, self::CHUNK_SIZE );
+            if ( $chunk === false || $chunk === '' ) break;
+
+            // Per-Chunk IV (12 bytes for GCM)
+            $iv = random_bytes( self::IV_LENGTH );
+            $tag = '';
             
-            if ( $chunk === false ) break;
+            // Encrypt
+            $ciphertext = openssl_encrypt( $chunk, self::CIPHER, $key, OPENSSL_RAW_DATA, $iv, $tag );
             
-            $chunk_len = strlen( $chunk );
-            if ( $chunk_len === 0 ) break;
-
-            $processed += $chunk_len;
-            $is_last = ( $processed >= $fsize );
-
-            if ( $is_last ) {
-                // PKCS7 Padding for the last block
-                $pad = 16 - ( $chunk_len % 16 );
-                $chunk .= str_repeat( chr( $pad ), $pad );
-            } elseif ( $chunk_len % 16 !== 0 ) {
-                // If not last chunk but length is not multiple of 16, something is wrong with read or file alignment?
-                // Actually fread should return requested size unless EOF.
-                // If we get partial read and it's NOT EOF (rare but possible with network/stream wrappers, unlikely for local file), 
-                // we should theoretically loop to fill buffer. But for local files, short read usually means EOF.
-                // We'll treat short read as end of stream logic above via $processed checks.
-            }
-
-            // Encrypt using OPENSSL_RAW_DATA and ZERO_PADDING (we manage padding manually)
-            $ciphertext = openssl_encrypt( $chunk, self::METHOD, $key, OPENSSL_RAW_DATA | OPENSSL_ZERO_PADDING, $current_iv );
-
             if ( $ciphertext === false ) {
-                fclose( $fp_in );
-                fclose( $fp_out );
-                return [ 'error' => 'Encryption failed: ' . openssl_error_string() ];
+                fclose($fp_in); fclose($fp_out);
+                return [ 'error' => 'Encryption failed at chunk ' . $chunk_idx ];
             }
 
-            fwrite( $fp_out, $ciphertext );
-
-            // Update IV for next chunk (last block of ciphertext)
-            $current_iv = substr( $ciphertext, -16 );
-        }
-
-        // If file was empty, we still need to write padded block?
-        // Yes, empty file -> pad 16 bytes of \x10.
-        if ( $fsize === 0 ) {
-            $pad = 16;
-            $chunk = str_repeat( chr($pad), $pad );
-            $ciphertext = openssl_encrypt( $chunk, self::METHOD, $key, OPENSSL_RAW_DATA | OPENSSL_ZERO_PADDING, $current_iv );
-            fwrite( $fp_out, $ciphertext );
+            // Write: IV + Tag + Ciphertext
+            fwrite( $fp_out, $iv . $tag . $ciphertext );
+            $chunk_idx++;
         }
 
         fclose( $fp_in );
@@ -103,95 +69,163 @@ class WPRB_Crypto {
     }
 
     /**
-     * Decrypt a file.
+     * Decrypt a file (Supports V1 and V2).
      */
     public static function decrypt_file( $source_path, $dest_path, $passphrase ) {
-        if ( ! file_exists( $source_path ) ) {
-            return [ 'error' => 'Source file not found' ];
-        }
+        if ( ! file_exists( $source_path ) ) return [ 'error' => 'Source file not found' ];
         
         if ( empty( $passphrase ) ) {
-            // Try to get from options if empty
             $passphrase = get_option( 'wprb_encryption_key' );
         }
-        
-        if ( empty( $passphrase ) ) { 
-             return [ 'error' => 'Passphrase missing' ];
-        }
+        if ( empty( $passphrase ) ) return [ 'error' => 'Passphrase missing' ];
 
-        $fp_in  = fopen( $source_path, 'rb' );
-        $fp_out = fopen( $dest_path, 'wb' );
+        $fp_in = fopen( $source_path, 'rb' );
+        if ( ! $fp_in ) return [ 'error' => 'Could not open source file' ];
 
-        if ( ! $fp_in || ! $fp_out ) {
-            return [ 'error' => 'File IO error' ];
-        }
-
-        // Read Header
+        // 1. Magic Check
         $magic = fread( $fp_in, 4 );
         if ( $magic !== 'WPRB' ) {
             fclose( $fp_in );
-            fclose( $fp_out );
             return [ 'error' => 'Invalid file format (Not WPRB encrypted)' ];
         }
-        
-        $ver   = unpack('C', fread( $fp_in, 1 ))[1]; // Version (unused for now)
-        $salt  = fread( $fp_in, 16 );
-        $iv    = fread( $fp_in, 16 );
 
-        $key = hash_pbkdf2( 'sha256', $passphrase, $salt, 10000, 32, true );
+        // 2. Version Check
+        $ver_char = fread( $fp_in, 1 );
+        $ver = ord( $ver_char );
+
+        // Rewind to allow specific methods to handle stream cleanly if needed (though we mostly just need to pass the stream or offset)
+        // Actually, simplest is to pass the resource handle.
+        // BUT: our methods assume they start reading AFTER header/version.
+        // So we leave the pointer here.
+
+        $fp_out = fopen( $dest_path, 'wb' );
+        if ( ! $fp_out ) {
+            fclose($fp_in);
+            return [ 'error' => 'Could not create destination file' ];
+        }
+
+        if ( $ver === 2 ) {
+            return self::decrypt_v2( $fp_in, $fp_out, $passphrase );
+        } elseif ( $ver === 1 ) {
+            return self::decrypt_v1( $fp_in, $fp_out, $passphrase );
+        } else {
+            fclose($fp_in); fclose($fp_out);
+            return [ 'error' => "Unsupported version: $ver" ];
+        }
+    }
+
+    private static function decrypt_v2( $fp_in, $fp_out, $pass ) {
+        // Read Salt
+        $salt = fread( $fp_in, self::SALT_LENGTH );
+        if ( strlen($salt) !== self::SALT_LENGTH ) {
+            fclose($fp_in); fclose($fp_out);
+            return [ 'error' => 'File truncated (Salt)' ];
+        }
+
+        $key = hash_pbkdf2( self::KDF_ALGO, $pass, $salt, self::KDF_ITERATIONS, 32, true );
+        $chunk_idx = 0;
+
+        while ( ! feof( $fp_in ) ) {
+            // Read IV
+            $iv = fread( $fp_in, self::IV_LENGTH );
+            if ( $iv === '' || $iv === false ) break; // EOF
+            if ( strlen($iv) !== self::IV_LENGTH ) {
+                fclose($fp_in); fclose($fp_out);
+                return [ 'error' => "Corrupt chunk $chunk_idx (IV)" ];
+            }
+
+            // Read Tag
+            $tag = fread( $fp_in, self::TAG_LENGTH );
+            if ( strlen($tag) !== self::TAG_LENGTH ) {
+                fclose($fp_in); fclose($fp_out);
+                return [ 'error' => "Corrupt chunk $chunk_idx (Tag)" ];
+            }
+
+            // Read Ciphertext (Size = CHUNK_SIZE)
+            // Note: Since GCM produces ciphertext of same length as plaintext, 
+            // and we write in CHUNK_SIZE blocks, valid blocks are CHUNK_SIZE.
+            // Last block is smaller.
+            // We just read up to CHUNK_SIZE.
+            $ciphertext = fread( $fp_in, self::CHUNK_SIZE );
+            if ( $ciphertext === false ) {
+                fclose($fp_in); fclose($fp_out);
+                return [ 'error' => "Read error at chunk $chunk_idx" ];
+            }
+            if ( $ciphertext === '' ) break; // Should have been caught by IV read, but for safety
+
+            // Decrypt
+            $plaintext = openssl_decrypt( $ciphertext, self::CIPHER, $key, OPENSSL_RAW_DATA, $iv, $tag );
+            if ( $plaintext === false ) {
+                fclose($fp_in); fclose($fp_out);
+                return [ 'error' => "Decryption failed at chunk $chunk_idx (Wrong password or corrupted data)" ];
+            }
+
+            fwrite( $fp_out, $plaintext );
+            $chunk_idx++;
+        }
+
+        fclose( $fp_in );
+        fclose( $fp_out );
+        return [ 'success' => true ];
+    }
+
+    private static function decrypt_v1( $fp_in, $fp_out, $pass ) {
+        // V1 Header: Magic(4)[Read] + Ver(1)[Read] + Salt(16) + IV(16)
+        $salt = fread( $fp_in, 16 );
+        $iv   = fread( $fp_in, 16 );
+
+        // Weak KDF parameters from V1
+        $key = hash_pbkdf2( 'sha256', $pass, $salt, 10000, 32, true );
         $current_iv = $iv;
         
-        // Calculate Ciphertext Size
-        $header_size = 4 + 1 + 16 + 16; // 37
-        $fsize = filesize( $source_path );
+        // We need total file size for V1 padding logic
+        $stat = fstat( $fp_in );
+        $fsize = $stat['size'];
+        $header_size = 4 + 1 + 16 + 16;
         $ct_size = $fsize - $header_size;
         $processed = 0;
 
         while ( ! feof( $fp_in ) && $processed < $ct_size ) {
-            // Read ciphertext
             $chunk = fread( $fp_in, self::CHUNK_SIZE );
-            
-            if ( $chunk === false ) break;
+            if ( ! $chunk ) break;
             
             $chunk_len = strlen( $chunk );
-            if ( $chunk_len === 0 ) break;
-            
             $processed += $chunk_len;
-            $is_last = ( $processed >= $ct_size );
-
-            // Save next IV before decrypting
+            
             $next_iv = substr( $chunk, -16 );
-
-            $plaintext = openssl_decrypt( $chunk, self::METHOD, $key, OPENSSL_RAW_DATA | OPENSSL_ZERO_PADDING, $current_iv );
-
-            if ( $plaintext === false ) {
-                fclose( $fp_in );
-                fclose( $fp_out );
+            $pt = openssl_decrypt( $chunk, self::V1_METHOD, $key, OPENSSL_RAW_DATA | OPENSSL_ZERO_PADDING, $current_iv );
+            
+            if ( $pt === false ) {
+                fclose($fp_in); fclose($fp_out);
                 return [ 'error' => 'Decryption failed (Wrong password?)' ];
             }
 
-            // If Last Chunk, remove padding
-            if ( $is_last ) {
-                $pad = ord( substr( $plaintext, -1 ) );
+            // Remove V1 Padding
+            if ( $processed >= $ct_size ) {
+                $pad = ord( substr( $pt, -1 ) );
                 if ( $pad > 0 && $pad <= 16 ) {
-                    // Start of padding
-                    $valid_len = strlen( $plaintext ) - $pad;
-                    if ( $valid_len >= 0 ) {
-                        $plaintext = substr( $plaintext, 0, $valid_len );
-                    }
+                    // Check if padding is valid
+                     $padding_valid = true;
+                     $padding_content = substr( $pt, -$pad );
+                     for($i=0; $i<$pad; $i++) {
+                         if ( ord($padding_content[$i]) !== $pad ) $padding_valid = false;
+                     }
+
+                     if ( $padding_valid ) {
+                         $pt = substr( $pt, 0, strlen($pt) - $pad );
+                     }
                 }
             }
 
-            fwrite( $fp_out, $plaintext );
+            fwrite( $fp_out, $pt );
             $current_iv = $next_iv;
         }
 
         fclose( $fp_in );
         fclose( $fp_out );
-
         return [ 'success' => true ];
     }
-    
+
     /**
      * Check if file is encrypted (checks Magic Header).
      */
@@ -206,4 +240,5 @@ class WPRB_Crypto {
         
         return $magic === 'WPRB';
     }
+
 }

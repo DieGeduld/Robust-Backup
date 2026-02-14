@@ -22,12 +22,26 @@ define( 'KICKSTART_SCRIPT', basename( __FILE__ ) );
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Simplified Crypto Class
+ * Simplified Crypto Class (Secure V2)
+ * 
+ * Improvements based on audit:
+ * - Uses AES-256-GCM (Authenticated Encryption) instead of CBC
+ * - Increases PBKDF2 iterations to 600,000
+ * - Uses individual IV/Tag per chunk
+ * - Removes manual padding logic (handled by GCM)
  */
 class WRB_Crypto {
-    const METHOD = 'aes-256-cbc';
+    const CIPHER = 'aes-256-gcm';
+    const KDF_ALGO = 'sha256';
+    const KDF_ITERATIONS = 600000; // Benchmark: ~0.5s on modern CPU
     const CHUNK_SIZE = 1048576; // 1MB
+    const TAG_LENGTH = 16;
+    const IV_LENGTH = 12;
+    const SALT_LENGTH = 32;
 
+    /**
+     * Decrypts a file (Supports V2 only for security, or V1 fallback if needed)
+     */
     public static function decrypt_file( $source, $dest, $pass ) {
         if ( ! file_exists( $source ) ) return [ 'error' => 'File not found' ];
         
@@ -36,69 +50,107 @@ class WRB_Crypto {
         
         if ( ! $fp_in || ! $fp_out ) return [ 'error' => 'IO Error' ];
 
+        // 1. Header Check
         $magic = fread( $fp_in, 4 );
         if ( $magic !== 'WPRB' ) {
             fclose($fp_in); fclose($fp_out);
-            return [ 'error' => 'Invalid format' ];
+            return [ 'error' => 'Invalid file format (Magic mismatch)' ];
         }
         
-        $ver  = fread( $fp_in, 1 );
-        $salt = fread( $fp_in, 16 );
-        $iv   = fread( $fp_in, 16 );
+        // 2. Version Check
+        $ver_char = fread( $fp_in, 1 );
+        $ver = ord( $ver_char );
 
-        $key = hash_pbkdf2( 'sha256', $pass, $salt, 10000, 32, true );
-        $current_iv = $iv;
+        if ( $ver === 2 ) {
+            return self::decrypt_v2( $fp_in, $fp_out, $pass );
+        } elseif ( $ver === 1 ) {
+            // Legacy Fallback (Warnung: Unsicher!)
+            // Wenn du alte Backups unterstützen musst, hier die alte Logik einfügen.
+            // Aus Sicherheitsgründen empfehlen wir, nur V2 zu nutzen.
+            fclose($fp_in); fclose($fp_out);
+            return [ 'error' => 'Legacy Backup Format (V1) detected. Please re-create backup with new security standards or downgrade installer.' ];
+        }
+
+        fclose($fp_in); fclose($fp_out);
+        return [ 'error' => "Unsupported version: $ver" ];
+    }
+
+    private static function decrypt_v2( $fp_in, $fp_out, $pass ) {
+        // 3. Get Salt & Derive Key
+        $salt = fread( $fp_in, self::SALT_LENGTH );
+        if ( strlen($salt) !== self::SALT_LENGTH ) return [ 'error' => 'File truncated (Salt)' ];
+
+        $key = hash_pbkdf2( self::KDF_ALGO, $pass, $salt, self::KDF_ITERATIONS, 32, true );
+
+        // 4. Decrypt Chunks
+        $chunk_idx = 0;
         
-        $stat = fstat( $fp_in );
-        $fsize = $stat['size'];
-        $header_size = 4 + 1 + 16 + 16;
-        $ct_size = $fsize - $header_size;
-        $processed = 0;
+        while ( ! feof( $fp_in ) ) {
+            // Read IV
+            $iv = fread( $fp_in, self::IV_LENGTH );
+            if ( $iv === '' || $iv === false ) break; // EOF clean
+            if ( strlen( $iv ) !== self::IV_LENGTH ) return [ 'error' => "Corrupt chunk $chunk_idx (IV)" ];
 
-        while ( ! feof( $fp_in ) && $processed < $ct_size ) {
-            $chunk = fread( $fp_in, self::CHUNK_SIZE );
-            if ( ! $chunk ) break;
+            // Read Tag
+            $tag = fread( $fp_in, self::TAG_LENGTH );
+            if ( strlen( $tag ) !== self::TAG_LENGTH ) return [ 'error' => "Corrupt chunk $chunk_idx (Tag)" ];
+
+            // Read Ciphertext
+            // Note: Ciphertext size == Plaintext size in GCM. 
+            // We read up to CHUNK_SIZE. If strict blocking was used, we'd read exactly CHUNK_SIZE unless EOF.
+            $ciphertext = fread( $fp_in, self::CHUNK_SIZE );
+            if ( $ciphertext === false || $ciphertext === '' ) return [ 'error' => "Corrupt chunk $chunk_idx (Body)" ];
+
+            // Decrypt
+            $plaintext = openssl_decrypt( $ciphertext, self::CIPHER, $key, OPENSSL_RAW_DATA, $iv, $tag );
             
-            $chunk_len = strlen( $chunk );
-            $processed += $chunk_len;
-            
-            $next_iv = substr( $chunk, -16 );
-            $pt = openssl_decrypt( $chunk, self::METHOD, $key, OPENSSL_RAW_DATA | OPENSSL_ZERO_PADDING, $current_iv );
-            
-            if ( $pt === false ) {
-                fclose($fp_in); fclose($fp_out);
-                return [ 'error' => 'Decryption failed (Wrong password?)' ];
+            if ( $plaintext === false ) {
+                return [ 'error' => "Decryption failed at chunk $chunk_idx (Wrong password or corrupted data)" ];
             }
 
-            // Remove padding on last chunk
-            if ( $processed >= $ct_size ) {
-                $pad = ord( substr( $pt, -1 ) );
-                
-                // PKCS7 padding must be between 1 and 16 bytes for AES
-                if ( $pad < 1 || $pad > 16 ) {
-                    fclose($fp_in); fclose($fp_out);
-                    return [ 'error' => 'Entschlüsselung fehlgeschlagen (Falsches Passwort oder beschädigte Datei)' ];
-                }
-
-                // Verify all padding bytes
-                $padding_content = substr( $pt, -$pad );
-                for ( $i = 0; $i < $pad; $i++ ) {
-                    if ( ord( $padding_content[$i] ) !== $pad ) {
-                        fclose($fp_in); fclose($fp_out);
-                        return [ 'error' => 'Entschlüsselung fehlgeschlagen (Falsches Passwort)' ];
-                    }
-                }
-                
-                $pt = substr( $pt, 0, strlen($pt) - $pad );
-            }
-
-            fwrite( $fp_out, $pt );
-            $current_iv = $next_iv;
+            fwrite( $fp_out, $plaintext );
+            $chunk_idx++;
         }
 
         fclose( $fp_in );
         fclose( $fp_out );
         return [ 'success' => true ];
+    }
+
+    /**
+     * Helper to Create Encrypted Files (For Plugin/Backup-Script)
+     * Copy this method to your main backup plugin!
+     */
+    public static function encrypt_file( $source, $dest, $pass ) {
+        $fp_in  = fopen( $source, 'rb' );
+        $fp_out = fopen( $dest, 'wb' );
+
+        // Header: Magic(4) + Version(1)
+        fwrite( $fp_out, 'WPRB' . chr(2) );
+
+        // Salt
+        $salt = random_bytes( self::SALT_LENGTH );
+        fwrite( $fp_out, $salt );
+
+        // Key Derivation
+        $key = hash_pbkdf2( self::KDF_ALGO, $pass, $salt, self::KDF_ITERATIONS, 32, true );
+
+        while ( ! feof( $fp_in ) ) {
+            $chunk = fread( $fp_in, self::CHUNK_SIZE );
+            if ( $chunk === false || $chunk === '' ) break;
+
+            $iv = random_bytes( self::IV_LENGTH );
+            $tag = ''; // Passed by reference
+            
+            $ciphertext = openssl_encrypt( $chunk, self::CIPHER, $key, OPENSSL_RAW_DATA, $iv, $tag );
+            
+            // Format: IV + Tag + Ciphertext
+            fwrite( $fp_out, $iv . $tag . $ciphertext );
+        }
+
+        fclose( $fp_in );
+        fclose( $fp_out );
+        return true;
     }
 }
 

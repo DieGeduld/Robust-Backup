@@ -362,7 +362,7 @@ class WPRB_Backup_Scheduler {
         return [
             'scheduled' => true,
             'timestamp' => $next_timestamp,
-            'date'      => date_i18n( 'd.m.Y H:i', $next_timestamp ),
+            'date'      => wp_date( 'd.m.Y H:i', $next_timestamp ),
             'in'        => human_time_diff( time(), $next_timestamp ),
             'id'        => $next_schedule_id // Optional: which schedule is next
         ];

@@ -794,7 +794,7 @@ class WPRB_Admin_Page {
                                 <td>
                                     <?php
                                     $next = wp_next_scheduled( 'wprb_scheduled_backup', [ $id ] );
-                                    echo $next ? date_i18n( 'd.m.Y H:i', $next ) : 'Inaktiv';
+                                    echo $next ? wp_date( 'd.m.Y H:i', $next ) : 'Inaktiv';
                                     ?>
                                 </td>
                                 <td>

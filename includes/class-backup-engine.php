@@ -174,6 +174,13 @@ class WPRB_Backup_Engine {
                 // Compress any tar files (tar → tar.gz)
                 $this->file_archiver->compress_tar_files( $backup_id );
 
+                // Copy kickstart.php to backup
+                $kickstart_src = WPRB_PLUGIN_DIR . 'kickstart.php';
+                $kickstart_dest = WPRB_BACKUP_DIR . $backup_id . '/kickstart.php';
+                if ( file_exists( $kickstart_src ) ) {
+                    copy( $kickstart_src, $kickstart_dest );
+                }
+
                 // Update file list with compressed versions
                 $backup_dir = WPRB_BACKUP_DIR . $backup_id . '/';
                 $all_files  = [];
@@ -228,8 +235,8 @@ class WPRB_Backup_Engine {
                     $file = $files[ $idx ];
                     $name = basename( $file );
 
-                    // Skip if already encrypted or metatata
-                    if ( substr( $name, -4 ) !== '.enc' && $name !== 'backup-meta.json' ) {
+                    // Skip if already encrypted or metatata or kickstart (must be plaintext)
+                    if ( substr( $name, -4 ) !== '.enc' && $name !== 'backup-meta.json' && $name !== 'kickstart.php' ) {
                         $dest = $file . '.enc';
                         
                         $res = WPRB_Crypto::encrypt_file( $file, $dest, $key );

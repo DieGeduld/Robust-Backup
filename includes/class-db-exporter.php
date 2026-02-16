@@ -51,10 +51,16 @@ class WPRB_DB_Exporter {
             $keys = $wpdb->get_results( "SHOW KEYS FROM `{$table}` WHERE Key_name = 'PRIMARY'" );
             $primary_key = false;
             
-            // Only use optimization if PK is a single column. 
-            // Composite keys would require complex tuple comparison (a,b) > (x,y), which is harder to implement reliably here.
+            // Only use optimization if PK is a single column.
+            // Composite keys would require complex tuple comparison (a,b) > (x,y).
+            // ALSO: Only use for INTEGER keys. Binary/String keys cause issues with comparisons and wpdb->prepare (e.g. wp_wffilemods).
             if ( count( $keys ) === 1 ) {
-                $primary_key = $keys[0]->Column_name;
+                $pk_col = $keys[0]->Column_name;
+                $col_info = $wpdb->get_row( "SHOW COLUMNS FROM `{$table}` LIKE '{$pk_col}'" );
+                
+                if ( $col_info && preg_match( '/int/i', $col_info->Type ) ) {
+                    $primary_key = $pk_col;
+                }
             }
 
             $table_info[] = [
@@ -216,7 +222,9 @@ class WPRB_DB_Exporter {
         }
 
         // Check if table is done
-        if ( count( $rows ) < $this->chunk_size || empty( $rows ) ) {
+        // If we got NO rows, or fewer than requested, we are done
+        // OR if using cursor and we hit the end (empty rows handled above, but explicit check here)
+        if ( empty( $rows ) || count( $rows ) < $this->chunk_size ) {
             $table['done'] = true;
             $state['current_idx']++;
             fwrite( $fh, "\n" );

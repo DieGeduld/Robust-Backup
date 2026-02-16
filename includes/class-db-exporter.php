@@ -41,15 +41,29 @@ class WPRB_DB_Exporter {
         // Get all tables
         $tables = $wpdb->get_col( "SHOW TABLES" );
 
-        // Build table info with row counts
+        // Build table info with row counts and primary keys
         $table_info = [];
         foreach ( $tables as $table ) {
             $count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$table}`" );
+            
+            // Get Primary Key
+            // Check for composite keys!
+            $keys = $wpdb->get_results( "SHOW KEYS FROM `{$table}` WHERE Key_name = 'PRIMARY'" );
+            $primary_key = false;
+            
+            // Only use optimization if PK is a single column. 
+            // Composite keys would require complex tuple comparison (a,b) > (x,y), which is harder to implement reliably here.
+            if ( count( $keys ) === 1 ) {
+                $primary_key = $keys[0]->Column_name;
+            }
+
             $table_info[] = [
-                'name'       => $table,
-                'total_rows' => $count,
-                'exported'   => 0,
-                'done'       => false,
+                'name'        => $table,
+                'total_rows'  => $count,
+                'exported'    => 0,
+                'done'        => false,
+                'primary_key' => $primary_key,
+                'last_id'     => 0
             ];
         }
 
@@ -124,15 +138,43 @@ class WPRB_DB_Exporter {
         }
 
         // Export rows in chunks
-        $offset = $table['exported'];
-        $rows = $wpdb->get_results(
-            $wpdb->prepare(
-                "SELECT * FROM `{$table_name}` LIMIT %d OFFSET %d",
-                $this->chunk_size,
-                $offset
-            ),
-            ARRAY_A
-        );
+        $primary_key = $table['primary_key'] ?? false;
+        $rows = [];
+
+        if ( $primary_key ) {
+            // Cursor-based pagination (Much faster for large tables)
+            $last_id = $table['last_id'] ?? 0;
+            
+            // Handle non-numeric PKs if necessary (statistically rare in WP core but possible in plugins)
+            // For simplicity and speed, we assume numeric or string sortable PKs.
+            // Using prepared statement for safety.
+            $rows = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT * FROM `{$table_name}` WHERE `{$primary_key}` > %s ORDER BY `{$primary_key}` ASC LIMIT %d",
+                    $last_id,
+                    $this->chunk_size
+                ),
+                ARRAY_A
+            );
+
+            if ( ! empty( $rows ) ) {
+                // Update last_id for next chunk
+                $last_row = end( $rows );
+                $table['last_id'] = $last_row[ $primary_key ];
+            }
+
+        } else {
+            // Fallback to OFFSET (Slow for deep pagination)
+            $offset = $table['exported'];
+            $rows = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT * FROM `{$table_name}` LIMIT %d OFFSET %d",
+                    $this->chunk_size,
+                    $offset
+                ),
+                ARRAY_A
+            );
+        }
 
         if ( ! empty( $rows ) ) {
             // Get column names from first row

@@ -74,17 +74,19 @@ class WPRB_DB_Exporter {
         }
 
         // Try mysqldump first (much faster)
-        $dump_success = $this->try_mysqldump( $backup_id, $this->output_file );
+        $dump_error = '';
+        $dump_success = $this->try_mysqldump( $backup_id, $this->output_file, $dump_error );
 
         $state = [
-            'backup_id'    => $backup_id,
-            'output_file'  => $this->output_file,
-            'tables'       => $table_info,
-            'current_idx'  => $dump_success ? count( $table_info ) : 0, // If done, skip to end
-            'total_tables' => count( $table_info ),
-            'started_at'   => time(),
-            'header_done'  => $dump_success, // Already done by dump
-            'mysqldump'    => $dump_success,
+            'backup_id'       => $backup_id,
+            'output_file'     => $this->output_file,
+            'tables'          => $table_info,
+            'current_idx'     => $dump_success ? count( $table_info ) : 0, // If done, skip to end
+            'total_tables'    => count( $table_info ),
+            'started_at'      => time(),
+            'header_done'     => $dump_success, // Already done by dump
+            'mysqldump'       => $dump_success,
+            'mysqldump_error' => $dump_error, // Store reason for failure if any
         ];
 
         update_option( $this->state_key(), $state, false );
@@ -314,6 +316,56 @@ class WPRB_DB_Exporter {
     }
 
     /**
+     * Run a benchmark of the PHP export method.
+     * returns file size or false on failure.
+     */
+    public function benchmark_php_export( $backup_id, $limit_rows = 0 ) {
+        $output_file = WPRB_BACKUP_DIR . $backup_id . '/benchmark.sql';
+        wp_mkdir_p( dirname( $output_file ) );
+        
+        $fh = fopen( $output_file, 'w' );
+        if ( ! $fh ) return false;
+
+        fwrite( $fh, $this->get_sql_header() );
+
+        global $wpdb;
+        $tables = $wpdb->get_col( "SHOW TABLES" );
+
+        foreach ( $tables as $table ) {
+            // Table structure
+            $create = $wpdb->get_row( "SHOW CREATE TABLE `{$table}`", ARRAY_N );
+            fwrite( $fh, "DROP TABLE IF EXISTS `{$table}`;\n" . $create[1] . ";\n\n" );
+
+            // Table data
+            $limit = $limit_rows > 0 ? " LIMIT $limit_rows" : "";
+            $rows = $wpdb->get_results( "SELECT * FROM `{$table}`$limit", ARRAY_N );
+            
+            if ( $rows ) {
+                fwrite( $fh, "INSERT INTO `{$table}` VALUES\n" );
+                $lines = [];
+                foreach ( $rows as $row ) {
+                    $values = [];
+                    foreach ( $row as $val ) {
+                        if ( is_null( $val ) ) $values[] = 'NULL';
+                        elseif ( is_numeric( $val ) ) $values[] = $val;
+                        else $values[] = "'" . esc_sql( $val ) . "'";
+                    }
+                    $lines[] = "(" . implode( ',', $values ) . ")";
+                }
+                fwrite( $fh, implode( ",\n", $lines ) . ";\n\n" );
+            }
+        }
+
+        fwrite( $fh, $this->get_sql_footer() );
+        fclose( $fh );
+
+        if ( file_exists( $output_file ) ) {
+            return filesize( $output_file );
+        }
+        return false;
+    }
+
+    /**
      * SQL file footer
      */
     private function get_sql_footer() {
@@ -330,8 +382,9 @@ class WPRB_DB_Exporter {
      * Try to use system mysqldump.
      * Returns true if successful.
      */
-    private function try_mysqldump( $backup_id, $output_file ) {
+    public function try_mysqldump( $backup_id, $output_file, &$error_log = '' ) {
         if ( ! function_exists( 'exec' ) ) {
+            $error_log = 'exec() is disabled';
             return false;
         }
 
@@ -347,6 +400,7 @@ class WPRB_DB_Exporter {
         }
 
         if ( ! $bin ) {
+            $error_log = 'mysqldump binary not found';
             return false;
         }
 
@@ -393,6 +447,7 @@ class WPRB_DB_Exporter {
         }
         
         // If failed, delete partial file so PHP fallback can start clean
+        $error_log = 'Return Code: ' . $return_code . ', Output: ' . implode( "\n", $output );
         @unlink( $output_file );
         return false;
     }

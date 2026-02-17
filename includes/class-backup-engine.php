@@ -94,7 +94,12 @@ class WPRB_Backup_Engine {
             case self::PHASE_INIT:
                 // Initialize the appropriate exporters
                 if ( $type === 'full' || $type === 'db_only' ) {
-                    $this->db_exporter->init_export( $backup_id );
+                    $db_state = $this->db_exporter->init_export( $backup_id );
+                    
+                    if ( isset( $db_state['mysqldump'] ) && ! $db_state['mysqldump'] && ! empty( $db_state['mysqldump_error'] ) ) {
+                        $this->log( 'mysqldump fehlgeschlagen (Fallback zu PHP): ' . $db_state['mysqldump_error'], 'WARNING' );
+                    }
+
                     $state['phase'] = self::PHASE_DB;
                     $state['message'] = 'Datenbank-Export wird gestartet...';
                 } elseif ( $type === 'files_only' ) {
@@ -126,18 +131,20 @@ class WPRB_Backup_Engine {
                         $state['all_files'][] = $sql_file;
                     }
 
+                    $via_dump = ( strpos( $result['message'], 'mysqldump' ) !== false ) ? ' (via mysqldump)' : '';
+
                     if ( $type === 'full' ) {
                         $this->file_archiver->init_archive( $backup_id );
                         $state['phase'] = self::PHASE_FILES;
                         $state['progress'] = 0; // Reset for next phase
-                        $state['message'] = 'Datenbank fertig. Starte Datei-Archivierung...';
+                        $state['message'] = 'Datenbank fertig' . $via_dump . '. Starte Datei-Archivierung...';
                     } else {
                         $state['phase'] = self::PHASE_UPLOAD;
                         $state['progress'] = 0; // Reset for next phase
-                        $state['message'] = 'Datenbank fertig. Starte Upload...';
+                        $state['message'] = 'Datenbank fertig' . $via_dump . '. Starte Upload...';
                     }
 
-                    $this->log( 'DB-Export abgeschlossen für ' . $backup_id );
+                    $this->log( 'DB-Export abgeschlossen für ' . $backup_id . $via_dump );
                 }
                 break;
 

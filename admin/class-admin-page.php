@@ -118,6 +118,15 @@ class WPRB_Admin_Page {
             'wprb-log',
             [ $this, 'render_log_page' ]
         );
+
+        add_submenu_page(
+            'wp-robust-backup',
+            'Tools & Debug',
+            'Tools & Debug',
+            'manage_options',
+            'wprb-tools',
+            [ $this, 'render_tools_page' ]
+        );
     }
 
     public function enqueue_assets( $hook ) {
@@ -1349,5 +1358,129 @@ class WPRB_Admin_Page {
         }
         exec( 'which tar 2>&1', $output, $ret );
         return $ret === 0;
+    }
+    // ─────────────────────────────────────────────
+    // Tools Page
+    // ─────────────────────────────────────────────
+
+    public function render_tools_page() {
+        ?>
+        <div class="wrap wprb-wrapper">
+            <h1><span class="dashicons dashicons-hammer"></span> Tools & Debugging</h1>
+            
+            <div class="wprb-card">
+                <h2>System-Status</h2>
+                <table class="widefat striped">
+                    <tbody>
+                        <tr>
+                            <td><strong>PHP Version</strong></td>
+                            <td><?php echo phpversion(); ?></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Betriebssystem</strong></td>
+                            <td><?php echo PHP_OS; ?></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Memory Limit</strong></td>
+                            <td><?php echo ini_get('memory_limit'); ?></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Max Execution Time</strong></td>
+                            <td><?php echo ini_get('max_execution_time'); ?> Sek.</td>
+                        </tr>
+                        <tr>
+                            <td><strong>exec() verfügbar</strong></td>
+                            <td>
+                                <?php 
+                                if ( function_exists('exec') ) {
+                                    echo '<span style="color:green; font-weight:bold;">JA</span>';
+                                } else {
+                                    echo '<span style="color:red; font-weight:bold;">NEIN</span> (von Hoster deaktiviert)';
+                                }
+                                ?>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>mysqldump</strong></td>
+                            <td>
+                                <span id="mysqldump-status">Wird geprüft... <span class="spinner is-active" style="float:none;"></span></span>
+                                <button class="button button-small" id="btn-check-mysqldump" style="margin-left: 10px;">Erneut prüfen</button>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="wprb-card" style="margin-top: 20px;">
+                <h2>Datenbank-Export Benchmark</h2>
+                <p>Hier kannst du testen, wie lange ein Datenbank-Export mit den verschiedenen Methoden dauert.</p>
+
+                <div style="display: flex; gap: 20px;">
+                    <div style="flex: 1; padding: 15px; background: #f9f9f9; border: 1px solid #ddd; border-radius: 4px;">
+                        <h3>PHP Export (Fallback)</h3>
+                        <p>Exportiert Tabelle für Tabelle via PHP Loop. Langsam, funktioniert aber überall.</p>
+                        <button class="button" onclick="runBenchmark('php')">Test starten</button>
+                        <div id="result-php" style="margin-top: 10px; font-weight: bold;"></div>
+                    </div>
+
+                    <div style="flex: 1; padding: 15px; background: #f9f9f9; border: 1px solid #ddd; border-radius: 4px;">
+                        <h3>mysqldump (System)</h3>
+                        <p>Nutzt das System-Tool. Sehr schnell, benötigt aber <code>exec()</code>.</p>
+                        <button class="button" onclick="runBenchmark('mysqldump')">Test starten</button>
+                        <div id="result-mysqldump" style="margin-top: 10px; font-weight: bold;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <script>
+            jQuery(document).ready(function($) {
+                // Check mysqldump on load
+                checkMysqldump();
+
+                $('#btn-check-mysqldump').on('click', function(e) {
+                    e.preventDefault();
+                    checkMysqldump();
+                });
+
+                function checkMysqldump() {
+                    $('#mysqldump-status').html('Prüfe... <span class="spinner is-active" style="float:none;"></span>');
+                    
+                    $.post(ajaxurl, {
+                        action: 'wprb_check_mysqldump',
+                        nonce: '<?php echo wp_create_nonce("wprb_tools_nonce"); ?>'
+                    }, function(res) {
+                        if(res.success) {
+                            $('#mysqldump-status').html('<span style="color:green; font-weight:bold;">VERFÜGBAR</span> (' + res.data.version + ')<br><code style="font-size:10px;">' + res.data.path + '</code>');
+                        } else {
+                            $('#mysqldump-status').html('<span style="color:red; font-weight:bold;">NICHT VERFÜGBAR</span><br><em>' + res.data + '</em>');
+                        }
+                    });
+                }
+
+                window.runBenchmark = function(method) {
+                    var resultDiv = $('#result-' + method);
+                    resultDiv.html('Teste... <span class="spinner is-active" style="float:none;"></span>');
+                    
+                    var startTime = new Date().getTime();
+
+                    $.post(ajaxurl, {
+                        action: 'wprb_db_benchmark',
+                        method: method,
+                        nonce: '<?php echo wp_create_nonce("wprb_tools_nonce"); ?>'
+                    }, function(res) {
+                        var endTime = new Date().getTime();
+                        var duration = (endTime - startTime) / 1000;
+
+                        if (res.success) {
+                            resultDiv.html('<span style="color:green;">Fertig!</span><br>Dauer: ' + res.data.duration + 's<br>Größe: ' + res.data.size);
+                        } else {
+                            resultDiv.html('<span style="color:red;">Fehler:</span> ' + res.data);
+                        }
+                    });
+                }
+            });
+            </script>
+        </div>
+        <?php
     }
 }

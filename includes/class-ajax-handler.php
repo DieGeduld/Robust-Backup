@@ -40,6 +40,10 @@ class WPRB_Ajax_Handler {
         
         // Test Email
         add_action( 'wp_ajax_wprb_send_test_email', [ $this, 'send_test_email' ] );
+
+        // Tools
+        add_action( 'wp_ajax_wprb_check_mysqldump', [ $this, 'check_mysqldump' ] );
+        add_action( 'wp_ajax_wprb_db_benchmark', [ $this, 'db_benchmark' ] );
     }
 
     /**
@@ -488,5 +492,107 @@ class WPRB_Ajax_Handler {
 
         $engine = new WPRB_Restore_Engine();
         wp_send_json_success( $engine->get_status() );
+    }
+    /**
+     * Check mysqldump status.
+     */
+    public function check_mysqldump() {
+        if ( ! current_user_can( 'manage_options' ) ) wp_send_json_error( 'Forbidden' );
+
+        if ( ! function_exists( 'exec' ) ) {
+            wp_send_json_error( 'exec() function is disabled.' );
+        }
+
+      $bin = null;
+
+    // 1. Bekannte Pfade direkt prüfen (kein exec nötig)
+    $knownPaths = [
+        '/usr/bin/mysqldump',
+        '/usr/local/bin/mysqldump',
+        '/opt/homebrew/bin/mysqldump',
+        '/opt/homebrew/opt/mysql-client/bin/mysqldump',
+        '/usr/local/mysql/bin/mysqldump',
+    ];
+
+    foreach ($knownPaths as $p) {
+        if (is_executable($p)) {
+            $bin = $p;
+            break;
+        }
+    }
+
+    // 2. Falls nicht gefunden: Login-Shell fragen
+    if (!$bin) {
+        exec('bash -lc "which mysqldump" 2>/dev/null', $out, $ret);
+        if ($ret === 0 && !empty($out[0]) && is_executable($out[0])) {
+            $bin = $out[0];
+        }
+    }
+
+    if ( $bin ) {
+        $version = 'Unknown';
+        exec( "$bin --version", $v_out, $v_ret );
+        if ( ! empty( $v_out ) ) {
+            $version = $v_out[0];
+        }
+        wp_send_json_success( [ 'path' => $bin, 'version' => $version ] );
+    } else {
+        wp_send_json_error( 'mysqldump binary not found in common paths.' );
+    }
+}
+
+    /**
+     * Run DB Benchmark.
+     */
+    public function db_benchmark() {
+        if ( ! current_user_can( 'manage_options' ) ) wp_send_json_error( 'Forbidden' );
+        
+        // Increase time limit
+        @set_time_limit( 300 );
+        
+        $method = $_POST['method'] ?? 'php';
+        $exporter = new WPRB_DB_Exporter();
+        
+        // Use a temp ID
+        $temp_id = 'benchmark_' . time();
+        $file_size = 0;
+        $error = '';
+
+        $start_time = microtime( true );
+
+        if ( $method === 'mysqldump' ) {
+             $output = WPRB_BACKUP_DIR . $temp_id . '/benchmark.sql';
+             wp_mkdir_p( dirname( $output ) );
+             
+             // Pass error ref
+             $res = $exporter->try_mysqldump( $temp_id, $output, $error );
+             
+             if ( $res ) {
+                 $file_size = filesize( $output );
+                 @unlink( $output );
+                 @rmdir( dirname( $output ) );
+             } else {
+                 wp_send_json_error( 'mysqldump failed: ' . $error );
+             }
+
+        } else {
+            // PHP
+            $file_size = $exporter->benchmark_php_export( $temp_id );
+            
+            if ( $file_size ) {
+                 $output = WPRB_BACKUP_DIR . $temp_id . '/benchmark.sql';
+                 @unlink( $output );
+                 @rmdir( dirname( $output ) );
+            } else {
+                wp_send_json_error( 'PHP Export fehlgeschlagen.' );
+            }
+        }
+        
+        $duration = microtime( true ) - $start_time;
+
+        wp_send_json_success( [ 
+            'size'     => size_format( $file_size ), 
+            'duration' => number_format( $duration, 2 ) 
+        ] ); 
     }
 }

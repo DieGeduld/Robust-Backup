@@ -388,14 +388,27 @@ class WPRB_DB_Exporter {
             return false;
         }
 
-        // Check availability
-        $bin = null;
-        $paths = [ '/usr/bin/mysqldump', '/usr/local/bin/mysqldump', '/opt/homebrew/bin/mysqldump', 'mysqldump' ];
-        foreach ( $paths as $p ) {
-            exec( "which $p 2>/dev/null", $out, $ret );
-            if ( $ret === 0 && ! empty( $out ) ) {
-                $bin = $out[0];
+        // 1. Bekannte Pfade direkt prüfen (kein exec nötig)
+        $knownPaths = [
+            '/usr/bin/mysqldump',
+            '/usr/local/bin/mysqldump',
+            '/opt/homebrew/bin/mysqldump',
+            '/opt/homebrew/opt/mysql-client/bin/mysqldump',
+            '/usr/local/mysql/bin/mysqldump',
+        ];
+
+        foreach ($knownPaths as $p) {
+            if (is_executable($p)) {
+                $bin = $p;
                 break;
+            }
+        }
+
+        // 2. Falls nicht gefunden: Login-Shell fragen
+        if (!$bin) {
+            exec('bash -lc "which mysqldump" 2>/dev/null', $out, $ret);
+            if ($ret === 0 && !empty($out[0]) && is_executable($out[0])) {
+                $bin = $out[0];
             }
         }
 

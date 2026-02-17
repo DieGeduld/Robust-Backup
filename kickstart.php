@@ -279,14 +279,20 @@ class WRB_Installer {
         $count = 0;
         
         while ( $line = fgets( $fh ) ) {
-            $trim = trim( $line );
-            if ( empty( $trim ) || strpos( $trim, '--' ) === 0 || strpos( $trim, '/*' ) === 0 ) continue;
+            $trim_line = trim( $line );
+            if ( empty( $trim_line ) || strpos( $trim_line, '--' ) === 0 || strpos( $trim_line, '/*' ) === 0 ) continue;
             
             $query .= $line;
-            if ( substr( trim($query), -1 ) === ';' ) {
-                if ( ! $mysqli->query( $query ) ) {
-                    // Ignore "table exists" etc?
-                    // wp_send_json_error( 'SQL Error: ' . $mysqli->error );
+            // Check end of LINE for semicolon, not the whole query (memory optimization)
+            if ( substr( rtrim( $line ), -1 ) === ';' ) {
+                try {
+                    $mysqli->query( $query );
+                } catch ( mysqli_sql_exception $e ) {
+                    // Ignore "Duplicate entry" (1062) to prevent stopping
+                    // Also ignore "Table already exists" (1050)
+                    if ( $e->getCode() !== 1062 && $e->getCode() !== 1050 ) {
+                         wp_send_json_error( 'SQL Error (' . $e->getCode() . '): ' . $e->getMessage() . ' in Query: ' . substr($query, 0, 100) . '...' );
+                    }
                 }
                 $query = '';
                 $count++;

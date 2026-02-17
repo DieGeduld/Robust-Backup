@@ -281,8 +281,13 @@ class WPRB_Backup_Engine {
 
                     $active_storage = ! empty( $state['storage_override'] ) ? $state['storage_override'] : (array) get_option( 'wprb_storage', [ 'local' ] );
 
+                    $duration_so_far = time() - ( $state['started_at'] ?? time() );
+                    
                     $meta = [
-                        'date'         => wp_date( 'Y-m-d H:i:s' ),
+                        'date'         => wp_date( 'Y-m-d H:i:s' ), // Local time
+                        'timestamp'    => time(),
+                        'started_at'   => $state['started_at'] ?? time(),
+                        'duration'     => $duration_so_far, // Duration of creation phase
                         'type'         => $type,
                         'wp_version'   => get_bloginfo( 'version' ),
                         'site_url'     => get_site_url(),
@@ -352,11 +357,15 @@ class WPRB_Backup_Engine {
 
                     $this->storage->enforce_retention();
 
+                    $total_duration = time() - ( $state['started_at'] ?? time() );
+                    $duration_human = $this->format_duration( $total_duration );
+
                     $state['phase']           = self::PHASE_DONE;
                     $state['progress']        = 100;
-                    $state['message']         = 'Backup abgeschlossen!';
+                    $state['duration']        = $total_duration;
+                    $state['message']         = "Backup abgeschlossen! (Dauer: $duration_human)";
                     $state['storage_results'] = $results;
-                    $this->log( 'Backup abgeschlossen: ' . $backup_id );
+                    $this->log( "Backup abgeschlossen: $backup_id (Dauer: $duration_human)" );
                 }
                 break;
 
@@ -428,6 +437,8 @@ class WPRB_Backup_Engine {
      * @param string $type Optional. Backup type ('full', 'db_only', 'files_only'). Default 'full'.
      */
     public function run_full_backup( $type = 'full' ) {
+        // ... (existing code omitted) ...
+        // I will just add the method after this one.
         $this->start( $type );
 
         $max_iterations = 10000; // Safety limit
@@ -451,6 +462,18 @@ class WPRB_Backup_Engine {
         }
 
         return $this->get_status();
+    }
+
+    /**
+     * Format seconds to human readable string.
+     */
+    private function format_duration( $seconds ) {
+        if ( $seconds < 60 ) {
+            return $seconds . 's';
+        }
+        $minutes = floor( $seconds / 60 );
+        $seconds = $seconds % 60;
+        return sprintf( '%dm %02ds', $minutes, $seconds );
     }
 
     /**

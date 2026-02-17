@@ -420,6 +420,7 @@ class WPRB_Admin_Page {
                             <th>Backup-ID</th>
                             <th>Datum</th>
                             <th>Typ</th>
+                            <th>Dauer</th>
                             <th>Größe</th>
                             <th>Ort</th>
                             <th>Dateien</th>
@@ -439,6 +440,17 @@ class WPRB_Admin_Page {
                                         'files_only' => 'Nur Dateien',
                                     ];
                                     echo esc_html( $type_labels[ $backup['type'] ] ?? $backup['type'] );
+                                    ?>
+                                </td>
+                                <td>
+                                    <?php 
+                                    if ( ! empty( $backup['duration'] ) ) {
+                                        $d = (int) $backup['duration'];
+                                        if ( $d < 60 ) echo $d . 's';
+                                        else echo floor($d / 60) . 'm ' . ($d % 60) . 's';
+                                    } else {
+                                        echo '<span class="wprb-muted">-</span>';
+                                    }
                                     ?>
                                 </td>
                                 <td><?php echo esc_html( $backup['size'] ); ?></td>

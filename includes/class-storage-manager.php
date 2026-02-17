@@ -1605,6 +1605,7 @@ class WPRB_Storage_Manager {
             $backups[] = [
                 'id'            => $backup_id,
                 'date'          => $meta['date'] ?? wp_date( 'Y-m-d H:i:s', filemtime( $dir ) ),
+                'duration'      => $meta['duration'] ?? null,
                 'size'          => size_format( $size ),
                 'size_raw'      => $size,
                 'type'          => $meta['type'] ?? 'full',

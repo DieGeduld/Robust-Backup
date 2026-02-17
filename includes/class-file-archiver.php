@@ -124,11 +124,12 @@ class WPRB_File_Archiver {
         }
 
         // Archive this batch
-        $archive_name = sprintf( 'files-part%03d.zip', $part );
+        $ext = $use_tar ? 'tar' : 'zip';
+        $archive_name = sprintf( 'files-part%03d.%s', $part, $ext );
         $archive_path = $backup_dir . $archive_name;
 
         if ( $use_tar ) {
-            $result = $this->archive_batch_tar( $batch, $archive_path, $backup_dir, $part );
+            $result = $this->archive_batch_tar( $batch, $archive_path, $backup_dir );
         } else {
             $result = $this->archive_batch_zip( $batch, $archive_path );
         }
@@ -224,6 +225,7 @@ class WPRB_File_Archiver {
                 $rel_path  = ltrim( str_replace( ABSPATH, '', $full_path ), '/' );
 
                 // Check excludes
+                // Improved: Check against array of base paths
                 if ( $this->is_excluded( $rel_path ) ) {
                     continue;
                 }
@@ -321,17 +323,13 @@ class WPRB_File_Archiver {
      */
     private function archive_batch_zip( $files, $archive_path ) {
         $zip = new ZipArchive();
-        $mode = file_exists( $archive_path ) ? ZipArchive::CHECKCONS : ZipArchive::CREATE;
+        // If file exists, we want to open it (to append), NOT overwrite it.
+        // ZipArchive::CREATE will open if exists or create if not.
+        // ZipArchive::OVERWRITE would truncate (bad).
+        $res = $zip->open( $archive_path, ZipArchive::CREATE );
 
-        // If existing file, open it; otherwise create new
-        if ( file_exists( $archive_path ) ) {
-            $result = $zip->open( $archive_path );
-        } else {
-            $result = $zip->open( $archive_path, ZipArchive::CREATE );
-        }
-
-        if ( $result !== true ) {
-            return [ 'error' => 'Cannot open zip archive: ' . $result ];
+        if ( $res !== true ) {
+            return [ 'error' => 'Cannot open zip archive: ' . $res ];
         }
 
         foreach ( $files as $file ) {
@@ -348,10 +346,7 @@ class WPRB_File_Archiver {
      * Archive a batch of files using system tar command.
      * More efficient for large files and avoids PHP memory issues.
      */
-    private function archive_batch_tar( $files, $archive_path, $backup_dir, $part ) {
-        $tar_name = sprintf( 'files-part%03d.tar.gz', $part );
-        $tar_path = $backup_dir . $tar_name;
-
+    private function archive_batch_tar( $files, $archive_path, $backup_dir ) {
         // Create relative paths for tar to match ZIP behavior
         $relative_files = array_map( function( $file ) {
             return ltrim( str_replace( ABSPATH, '', $file ), '/' );
@@ -362,25 +357,19 @@ class WPRB_File_Archiver {
         file_put_contents( $list_file, implode( "\n", $relative_files ) );
 
         // Append to existing tar or create new
-        if ( file_exists( $tar_path ) ) {
-            // We need to decompress, append, recompress (tar -rf doesn't work with .gz)
-            // Instead, let's use an uncompressed tar and compress at the end
-            $uncompressed = $backup_dir . sprintf( 'files-part%03d.tar', $part );
-
-            if ( ! file_exists( $uncompressed ) && file_exists( $tar_path ) ) {
-                exec( sprintf( 'gunzip -k %s 2>&1', escapeshellarg( $tar_path ) ), $output, $ret );
-            }
-
+        if ( file_exists( $archive_path ) ) {
+            // Append (-r)
             $cmd = sprintf(
                 'tar -rf %s -C %s -T %s 2>&1',
-                escapeshellarg( $uncompressed ),
+                escapeshellarg( $archive_path ),
                 escapeshellarg( ABSPATH ),
                 escapeshellarg( $list_file )
             );
         } else {
+            // Create (-c)
             $cmd = sprintf(
                 'tar -cf %s -C %s -T %s 2>&1',
-                escapeshellarg( str_replace( '.tar.gz', '.tar', $tar_path ) ),
+                escapeshellarg( $archive_path ),
                 escapeshellarg( ABSPATH ),
                 escapeshellarg( $list_file )
             );
@@ -390,11 +379,11 @@ class WPRB_File_Archiver {
         @unlink( $list_file );
 
         if ( $return_code !== 0 ) {
-            // Fallback to zip
-            return $this->archive_batch_zip( $files, $archive_path );
+            // If tar fails, return error (fallback to zip might complicate part extension logic)
+            return [ 'error' => 'Tar failed: ' . implode( "\n", $output ) ];
         }
 
-        return [ 'success' => true, 'archive' => $tar_path ];
+        return [ 'success' => true, 'archive' => $archive_path ];
     }
 
     /**

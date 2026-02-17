@@ -73,14 +73,18 @@ class WPRB_DB_Exporter {
             ];
         }
 
+        // Try mysqldump first (much faster)
+        $dump_success = $this->try_mysqldump( $backup_id, $this->output_file );
+
         $state = [
             'backup_id'    => $backup_id,
             'output_file'  => $this->output_file,
             'tables'       => $table_info,
-            'current_idx'  => 0,
+            'current_idx'  => $dump_success ? count( $table_info ) : 0, // If done, skip to end
             'total_tables' => count( $table_info ),
             'started_at'   => time(),
-            'header_done'  => false,
+            'header_done'  => $dump_success, // Already done by dump
+            'mysqldump'    => $dump_success,
         ];
 
         update_option( $this->state_key(), $state, false );
@@ -112,6 +116,17 @@ class WPRB_DB_Exporter {
             $header = $this->get_sql_header();
             fwrite( $fh, $header );
             $state['header_done'] = true;
+        }
+
+        // If mysqldump was used and successful, we are done immediately
+        if ( ! empty( $state['mysqldump'] ) ) {
+            fclose( $fh );
+            delete_option( $this->state_key() );
+            return [
+                'done'     => true,
+                'progress' => 100,
+                'message'  => 'Datenbank-Export abgeschlossen (via mysqldump).',
+            ];
         }
 
         $idx = $state['current_idx'];
@@ -309,5 +324,76 @@ class WPRB_DB_Exporter {
         $footer .= "-- End of backup\n";
 
         return $footer;
+    }
+
+    /**
+     * Try to use system mysqldump.
+     * Returns true if successful.
+     */
+    private function try_mysqldump( $backup_id, $output_file ) {
+        if ( ! function_exists( 'exec' ) ) {
+            return false;
+        }
+
+        // Check availability
+        $bin = null;
+        $paths = [ '/usr/bin/mysqldump', '/usr/local/bin/mysqldump', '/opt/homebrew/bin/mysqldump', 'mysqldump' ];
+        foreach ( $paths as $p ) {
+            exec( "which $p 2>/dev/null", $out, $ret );
+            if ( $ret === 0 && ! empty( $out ) ) {
+                $bin = $out[0];
+                break;
+            }
+        }
+
+        if ( ! $bin ) {
+            return false;
+        }
+
+        // Build command
+        $host = DB_HOST;
+        $user = DB_USER;
+        $pass = DB_PASSWORD;
+        $name = DB_NAME;
+        
+        // Handle port in host (localhost:3306)
+        $msg_host = $host;
+        $port_arg = '';
+        if ( strpos( $host, ':' ) !== false ) {
+            list( $h, $p ) = explode( ':', $host );
+            $msg_host = $h;
+            $port_arg = " --port=" . escapeshellarg( $p ) . " --host=" . escapeshellarg( $h );
+        } else {
+            $port_arg = " --host=" . escapeshellarg( $host );
+        }
+
+        // Safer to use defaults-extra-file for password to avoid process list exposure, 
+        // but for simplicity (and since we are likely alone on the VPS/Hosting), we use standard args.
+        // Warning: Password visible in ps aux. Use config file if possible.
+        // Let's use a temporary config file for security.
+        $cnf_file = WPRB_BACKUP_DIR . $backup_id . '/.my.cnf';
+        $cnf_content = "[client]\nuser=\"$user\"\npassword=\"$pass\"\nhost=\"$msg_host\"\n";
+        file_put_contents( $cnf_file, $cnf_content );
+        chmod( $cnf_file, 0600 );
+
+        $cmd = sprintf(
+            '%s --defaults-extra-file=%s --no-tablespaces --single-transaction --quick %s > %s 2>&1',
+            escapeshellarg( $bin ),
+            escapeshellarg( $cnf_file ),
+            escapeshellarg( $name ),
+            escapeshellarg( $output_file )
+        );
+
+        exec( $cmd, $output, $return_code );
+
+        @unlink( $cnf_file );
+
+        if ( $return_code === 0 && file_exists( $output_file ) && filesize( $output_file ) > 0 ) {
+            return true;
+        }
+        
+        // If failed, delete partial file so PHP fallback can start clean
+        @unlink( $output_file );
+        return false;
     }
 }

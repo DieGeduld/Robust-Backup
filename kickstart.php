@@ -743,7 +743,7 @@ async function startRestore() {
     let hasSQL = files.includes('database.sql') || decryptedFiles.includes('database.sql');
     
     if ( hasSQL ) {
-        log( 'Importiere Datenbank...' );
+        log( 'Importiere Datenbank... (Dies kann bei großen Datenbanken einige Minuten dauern)' );
         let res = await ajax( 'restore_db', { ...dbConfig, file: sqlFile } );
         if ( res.success ) {
             log( 'Datenbank importiert!' );

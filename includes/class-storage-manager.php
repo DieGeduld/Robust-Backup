@@ -1544,7 +1544,7 @@ class WPRB_Storage_Manager {
             // If local files are deleted, rely on metadata for file list
             if ( $is_local_deleted && ! empty( $meta['file_details'] ) ) {
                 foreach ( $meta['file_details'] as $cur_file ) {
-                    if ( basename( $cur_file['name'] ) === 'file_manifest.json.gz' ) continue;
+                    if ( basename( $cur_file['name'] ) === 'file_manifest.json.gz' || basename( $cur_file['name'] ) === 'file_manifest.zip' ) continue;
                     $file_info[] = [
                         'name' => $cur_file['name'],
                         'size' => size_format( $cur_file['size'] ),
@@ -1563,7 +1563,7 @@ class WPRB_Storage_Manager {
                 }
             } else {
                 foreach ( $files as $file ) {
-                    if ( is_file( $file ) && basename( $file ) !== 'file_list.txt' && basename( $file ) !== 'backup-meta.json' && basename( $file ) !== 'restore.log' && basename( $file ) !== 'file_manifest.json.gz' ) {
+                    if ( is_file( $file ) && basename( $file ) !== 'file_list.txt' && basename( $file ) !== 'backup-meta.json' && basename( $file ) !== 'restore.log' && basename( $file ) !== 'file_manifest.json.gz' && basename( $file ) !== 'file_manifest.zip' ) {
                         $fsize = filesize( $file );
                         $size += $fsize;
                         $file_info[] = [
@@ -1652,7 +1652,7 @@ class WPRB_Storage_Manager {
             if ( $file === '.' || $file === '..' ) continue;
             
             // Keep metadata, manifest and log
-            if ( $file === 'backup-meta.json' || $file === 'file_manifest.json.gz' || $file === 'restore.log' ) continue;
+            if ( $file === 'backup-meta.json' || $file === 'file_manifest.json.gz' || $file === 'file_manifest.zip' || $file === 'restore.log' ) continue;
 
             $path = $dir . '/' . $file;
             if ( is_file( $path ) ) {
